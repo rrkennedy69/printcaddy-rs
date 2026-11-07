@@ -61,6 +61,7 @@ struct GpuMesh {
     nbo: glow::Buffer,
     ebo: glow::Buffer,
     count: i32,
+    revision: u64,
 }
 
 struct GpuState {
@@ -132,8 +133,16 @@ fn paint(
         }
     }
     for object in &frame.objects {
-        if !gpu.meshes.contains_key(&object.id) {
-            gpu.upload_mesh(gl, object.id, &object.mesh);
+        let stale = gpu
+            .meshes
+            .get(&object.id)
+            .map(|mesh| mesh.revision != object.revision)
+            .unwrap_or(true);
+        if stale {
+            if let Some(old) = gpu.meshes.remove(&object.id) {
+                old.delete(gl);
+            }
+            gpu.upload_mesh(gl, object.id, object.revision, &object.mesh);
         }
     }
 
@@ -219,7 +228,7 @@ impl GpuState {
         self.grid_count = (vertices.len() / 6) as i32;
     }
 
-    fn upload_mesh(&mut self, gl: &glow::Context, id: u64, mesh: &UploadedMesh) {
+    fn upload_mesh(&mut self, gl: &glow::Context, id: u64, revision: u64, mesh: &UploadedMesh) {
         unsafe {
             let vao = gl.create_vertex_array().expect("vao");
             let vbo = gl.create_buffer().expect("vbo");
@@ -257,6 +266,7 @@ impl GpuState {
                     nbo,
                     ebo,
                     count: mesh.indices.len() as i32,
+                    revision,
                 },
             );
         }

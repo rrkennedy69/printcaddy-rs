@@ -18,27 +18,35 @@ A checked box means the Rust app at <https://rrkennedy69.github.io/printcaddy-rs
 - [x] STL export (the selection when one exists, otherwise every body)
 - [x] Default body colour `#8A98A6`
 
+## Milestone 2
+
+- [x] Undo and redo (buttons and Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z). One drag is one step. A second finger puts the move back and does not leave an undo step.
+- [x] Numeric properties: position X Y Z, rotation X Y Z in degrees about the body's centre, and width, depth, height
+- [x] Grid snap while dragging, 1 mm by default, with a switch to turn it off. Typed numbers stay exact.
+- [x] Delete and duplicate
+- [x] Simple solids at the current app's starting sizes: box 20×20×20, rounded box 40×30×20 with 5 mm corners, cylinder 20×20×20, capsule 40×20×20, ellipse 26×16×20, hexagon polygon, sphere 22, cone, pyramid and wedge 20, round roof 20×20×10, half sphere 22×22×11, paraboloid 22×22×20, torus 22×22×5, tube 20×20×20 with a 4 mm wall, five-point star 40×40×10, heart 40×40×10. New bodies are still `#8A98A6`.
+
 ## Shape library
 
-Milestone 1 can place a plain box and a plain cylinder. The boxes below are the full shape, with its parameters, presets, and inspector.
+The lines below are the full tool, including every special parameter. Milestone 2 places the simple solids at the library's starting size and edits position, size, and rotation. A line stays open when a special parameter (a taper, a side count, a font) is still missing.
 
-- [ ] Box
-- [ ] Rounded box
-- [ ] Cylinder
+- [x] Box
+- [x] Rounded box
+- [x] Cylinder
 - [ ] Capsule (slot), including one end smaller
-- [ ] Ellipse
+- [x] Ellipse
 - [ ] Polygon prism, 3 to 24 sides
 - [ ] Sphere, with a side-count control
-- [ ] Cone
-- [ ] Pyramid
-- [ ] Wedge
-- [ ] Round roof
-- [ ] Half sphere
-- [ ] Paraboloid
-- [ ] Torus
+- [x] Cone
+- [x] Pyramid
+- [x] Wedge
+- [x] Round roof
+- [x] Half sphere
+- [x] Paraboloid
+- [x] Torus
 - [ ] Loft (square-to-round and similar, solid or walled, straight or eased, twist, tilted top)
 - [ ] Vase (body, cross-section including a drawn one, a second section to blend, twist, patterns, drain holes, foot, saucer, lid, solid or hollow)
-- [ ] Tube
+- [x] Tube
 - [ ] Bent tube
 - [ ] Counterbore
 - [ ] Countersink
@@ -53,8 +61,8 @@ Milestone 1 can place a plain box and a plain cylinder. The boxes below are the 
 - [ ] Knurl (straight, crossed, round)
 - [ ] Hinge (print-in-place, screw holes, finger hinge)
 - [ ] Dovetail
-- [ ] Star
-- [ ] Heart
+- [x] Star
+- [x] Heart
 - [ ] Crescent
 - [ ] Ruler shape
 - [ ] Name tag (coloured layers, key-ring hole, rounded or chamfered letters)
@@ -87,7 +95,7 @@ Milestone 1 can place a plain box and a plain cylinder. The boxes below are the 
 ## Modelling tools
 
 - [ ] Copy, paste, duplicate, delete
-- [ ] Undo and redo
+- [x] Undo and redo
 - [ ] Solid and hole
 - [ ] Group, including nested groups, and Edit group (E) / Done
 - [ ] Bundle (parts move together, export as separate coloured bodies)
@@ -111,7 +119,7 @@ Milestone 1 can place a plain box and a plain cylinder. The boxes below are the 
 - [ ] Surface texture (grooves, knurl, honeycomb, bumps, Voronoi, bricks, knitting, rope, basket weave, carbon fibre, bark, wood grain, cracks, image height map, text)
 - [ ] Wrap an SVG or text around a cylinder, raised or engraved
 - [ ] Align
-- [ ] Snap to grid
+- [x] Snap to grid
 - [ ] Drop to the workplane
 - [ ] Lay flat
 - [ ] Mate faces (touching or flush, optional gap, hole or pin on an axis)

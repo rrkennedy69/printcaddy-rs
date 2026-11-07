@@ -14,6 +14,7 @@ pub struct UploadedMesh {
 #[derive(Clone)]
 pub struct DrawObject {
     pub id: u64,
+    pub revision: u64,
     pub color: [f32; 3],
     pub selected: bool,
     pub model: [f32; 16],
@@ -73,11 +74,12 @@ impl GridLines {
 static GRID: LazyLock<Arc<GridLines>> = LazyLock::new(|| Arc::new(GridLines::build()));
 
 pub fn mesh_cache_for(
-    cache: &mut HashMap<u64, Arc<UploadedMesh>>,
+    cache: &mut HashMap<(u64, u64), Arc<UploadedMesh>>,
     object: &Object,
 ) -> Arc<UploadedMesh> {
+    let key = (object.id.0, object.revision);
     cache
-        .entry(object.id.0)
+        .entry(key)
         .or_insert_with(|| {
             let mesh = object.local_mesh();
             Arc::new(UploadedMesh {
@@ -92,18 +94,20 @@ pub fn mesh_cache_for(
 pub fn draw_frame(
     doc: &Document,
     view_proj: Mat4,
-    cache: &mut HashMap<u64, Arc<UploadedMesh>>,
+    cache: &mut HashMap<(u64, u64), Arc<UploadedMesh>>,
 ) -> DrawFrame {
-    let live: std::collections::HashSet<u64> = doc.objects().iter().map(|o| o.id.0).collect();
-    cache.retain(|id, _| live.contains(id));
+    let live: std::collections::HashSet<(u64, u64)> =
+        doc.objects().iter().map(|o| (o.id.0, o.revision)).collect();
+    cache.retain(|key, _| live.contains(key));
     let objects = doc
         .objects()
         .iter()
         .map(|object| DrawObject {
             id: object.id.0,
+            revision: object.revision,
             color: object.color.to_rgb_f32(),
             selected: doc.selection() == Some(object.id),
-            model: Mat4::from_translation(object.position).to_cols_array(),
+            model: object.model_matrix().to_cols_array(),
             mesh: mesh_cache_for(cache, object),
         })
         .collect();

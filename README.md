@@ -6,7 +6,7 @@ The preview of this rewrite is [rrkennedy69.github.io/printcaddy-rs/](https://rr
 
 ## What runs today
 
-A 3D viewport with orbit, pan, and zoom on mouse and touch, a 256 mm build plate grid, box and cylinder primitives in the default slate `#8A98A6`, selection and moving on the plate, and STL import and export.
+A 3D viewport with orbit, pan, and zoom on mouse and touch, a 256 mm build plate, the simple solids at the current app's starting sizes in `#8A98A6`, selection and moving with 1 mm snap, a numeric panel for position, size and rotation, undo and redo, and STL import and export.
 
 The feature inventory and the milestone plan are in [docs/FEATURES.md](docs/FEATURES.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

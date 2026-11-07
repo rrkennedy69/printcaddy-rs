@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    document_to_stl, import_stl, ray_plane_y, Document, ObjectId, DEFAULT_MODEL_COLOR,
-    PLATE_SIZE_MM,
+    document_to_stl, import_stl, ray_plane_y, snap_mm, Document, History, ObjectId, Shape,
+    DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -40,8 +40,10 @@ pub struct PrintCaddyApp {
     doc: Document,
     camera: Camera,
     painter: ViewportPainter,
-    meshes: HashMap<u64, std::sync::Arc<UploadedMesh>>,
+    meshes: HashMap<(u64, u64), std::sync::Arc<UploadedMesh>>,
     incoming: Incoming,
+    history: History,
+    snap: bool,
     notice: String,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
@@ -59,6 +61,8 @@ impl PrintCaddyApp {
             painter: ViewportPainter::new(),
             meshes: HashMap::new(),
             incoming: files::incoming_slot(),
+            history: History::default(),
+            snap: true,
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
@@ -79,14 +83,24 @@ impl PrintCaddyApp {
 
     fn status_text(&self) -> String {
         match self.doc.selection().and_then(|id| self.doc.object(id)) {
-            Some(object) => format!(
-                "objects={} selected={} x={:.2} z={:.2} color={}",
-                self.doc.objects().len(),
-                object.name,
-                object.position.x,
-                object.position.z,
-                object.color.hex_string()
-            ),
+            Some(object) => {
+                let (w, d, h) = object.size();
+                format!(
+                    "objects={} selected={} x={:.2} y={:.2} z={:.2} rx={:.1} ry={:.1} rz={:.1} w={:.2} d={:.2} h={:.2} color={}",
+                    self.doc.objects().len(),
+                    object.name,
+                    object.position.x,
+                    object.position.y,
+                    object.position.z,
+                    object.rotation.x,
+                    object.rotation.y,
+                    object.rotation.z,
+                    w,
+                    d,
+                    h,
+                    object.color.hex_string()
+                )
+            }
             None => format!("objects={} selected=none", self.doc.objects().len()),
         }
     }
@@ -95,13 +109,19 @@ impl PrintCaddyApp {
         let Some((name, bytes)) = self.incoming.borrow_mut().take() else {
             return;
         };
+        self.history.end();
+        self.history.begin(&self.doc);
         match import_stl(&mut self.doc, &name, &bytes) {
             Ok(id) => {
                 let label = self.doc.object(id).map(|o| o.name.clone()).unwrap_or(name);
                 self.notice = format!("Imported {label}");
             }
-            Err(_) => self.notice = format!("Could not read {name} as STL"),
+            Err(_) => {
+                self.history.cancel();
+                self.notice = format!("Could not read {name} as STL");
+            }
         }
+        self.history.end();
     }
 
     fn export(&mut self) {
@@ -131,12 +151,21 @@ impl PrintCaddyApp {
                 if !now {
                     return;
                 }
+                if !engaged {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                }
                 if let Gesture::Move { engaged, .. } = &mut self.gesture {
                     *engaged = true;
                 }
                 let ray = self.ray_at(rect, pos);
                 if let Some(hit) = ray_plane_y(ray, plane_y) {
-                    self.doc.move_object_to(id, hit.x - grab_x, hit.z - grab_z);
+                    let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+                    self.doc.move_object_to(
+                        id,
+                        snap_mm(hit.x - grab_x, step),
+                        snap_mm(hit.z - grab_z, step),
+                    );
                 }
             }
             Gesture::Orbit {
@@ -206,6 +235,7 @@ impl PrintCaddyApp {
             _ => {}
         }
         self.gesture = Gesture::None;
+        self.history.end();
     }
 
     fn handle_touch(&mut self, ctx: &egui::Context, rect: Rect) -> bool {
@@ -255,6 +285,7 @@ impl PrintCaddyApp {
                 {
                     // A second finger takes the move back, the way the current app does.
                     self.doc.move_object_to(id, start_x, start_z);
+                    self.history.cancel();
                 }
                 let pos = *self.touches.values().next().unwrap();
                 if self.touches.len() == 1 && matches!(self.gesture, Gesture::Pinch { .. }) {
@@ -277,6 +308,7 @@ impl PrintCaddyApp {
                 } = self.gesture
                 {
                     self.doc.move_object_to(id, start_x, start_z);
+                    self.history.cancel();
                 }
                 let pts: Vec<Pos2> = self.touches.values().copied().take(2).collect();
                 if pts.len() == 2 {
@@ -356,60 +388,181 @@ impl PrintCaddyApp {
             self.camera.zoom_factor((-scroll * 0.0016).exp());
         }
     }
+
+    fn properties(&mut self, ui: &mut egui::Ui) {
+        let Some(id) = self.doc.selection() else {
+            ui.label("Nothing selected");
+            return;
+        };
+        let Some(object) = self.doc.object(id).cloned() else {
+            return;
+        };
+        ui.label(format!("Selected: {}", object.name));
+        let (width0, depth0, height0) = object.size();
+        let mut position = object.position;
+        let mut rotation = object.rotation;
+        let mut width = width0;
+        let mut depth = depth0;
+        let mut height = height0;
+        let mut pose = false;
+        let mut sized = false;
+        ui.label("Position (mm)");
+        pose |= number(ui, "X", &mut position.x);
+        pose |= number(ui, "Y", &mut position.y);
+        pose |= number(ui, "Z", &mut position.z);
+        ui.label("Rotation (degrees)");
+        pose |= number(ui, "Rot X", &mut rotation.x);
+        pose |= number(ui, "Rot Y", &mut rotation.y);
+        pose |= number(ui, "Rot Z", &mut rotation.z);
+        ui.label("Size (mm)");
+        sized |= number(ui, "Width", &mut width);
+        sized |= number(ui, "Depth", &mut depth);
+        sized |= number(ui, "Height", &mut height);
+        if (pose || sized) && !self.history.is_open() {
+            self.history.begin(&self.doc);
+        }
+        if pose {
+            self.doc.set_position(id, position);
+            self.doc.set_rotation(id, rotation);
+        }
+        if sized
+            && ((width - width0).abs() > 1e-4
+                || (depth - depth0).abs() > 1e-4
+                || (height - height0).abs() > 1e-4)
+        {
+            self.doc.set_size(id, width, depth, height);
+        }
+    }
 }
 
 impl eframe::App for PrintCaddyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.take_import();
+        let command = ctx.input(|input| input.modifiers.command);
+        let undo_key =
+            ctx.input(|input| command && input.key_pressed(egui::Key::Z) && !input.modifiers.shift);
+        let redo_key = ctx.input(|input| {
+            command
+                && (input.key_pressed(egui::Key::Y)
+                    || (input.modifiers.shift && input.key_pressed(egui::Key::Z)))
+        });
+        let delete_key = !ctx.wants_keyboard_input()
+            && ctx.input(|input| {
+                input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace)
+            });
+        if undo_key {
+            self.history.undo(&mut self.doc);
+            self.notice = "Undid the last change".into();
+        } else if redo_key {
+            self.history.redo(&mut self.doc);
+            self.notice = "Redid the change".into();
+        } else if delete_key {
+            if let Some(id) = self.doc.selection() {
+                self.history.end();
+                self.history.begin(&self.doc);
+                self.doc.delete(id);
+                self.history.end();
+                self.notice = "Deleted the selection".into();
+            }
+        }
+
         let mut export = false;
         let mut import = false;
-        let mut add_box = false;
-        let mut add_cylinder = false;
+        let mut chosen: Option<Shape> = None;
+        let mut undo = false;
+        let mut redo = false;
+        let mut duplicate = false;
+        let mut delete = false;
 
         egui::SidePanel::left("tools")
-            .exact_width(248.0)
+            .exact_width(280.0)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.heading("PrintCaddy");
-                ui.label("Rust and WebAssembly");
-                ui.add_space(8.0);
-                add_box = ui.add_sized([220.0, 32.0], egui::Button::new("Add box")).clicked();
-                add_cylinder = ui.add_sized([220.0, 32.0], egui::Button::new("Add cylinder")).clicked();
-                import = ui.add_sized([220.0, 32.0], egui::Button::new("Import STL")).clicked();
-                export = ui.add_sized([220.0, 32.0], egui::Button::new("Export STL")).clicked();
-                ui.add_space(8.0);
-                ui.separator();
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
-                ui.painter().rect_filled(rect, 3.0, Color32::from_rgb(DEFAULT_MODEL_COLOR.r, DEFAULT_MODEL_COLOR.g, DEFAULT_MODEL_COLOR.b));
-                ui.label(format!("Default colour {}", DEFAULT_MODEL_COLOR.hex_string()));
-                ui.label(format!("Plate {PLATE_SIZE_MM:.0} × {PLATE_SIZE_MM:.0} mm"));
-                match self.doc.selection().and_then(|id| self.doc.object(id)) {
-                    Some(object) => {
-                        ui.label(format!("Selected: {}", object.name));
-                        ui.label(format!("X {:.1} mm    Z {:.1} mm", object.position.x, object.position.z));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add_space(8.0);
+                    ui.heading("PrintCaddy");
+                    ui.label("Rust and WebAssembly");
+                    ui.horizontal(|ui| {
+                        undo = ui.add_enabled(self.history.can_undo(), egui::Button::new("Undo")).clicked();
+                        redo = ui.add_enabled(self.history.can_redo(), egui::Button::new("Redo")).clicked();
+                    });
+                    ui.separator();
+                    ui.label("Shapes");
+                    ui.horizontal_wrapped(|ui| {
+                        for shape in Shape::ALL {
+                            if ui.button(shape.label()).clicked() {
+                                chosen = Some(shape);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        import = ui.button("Import STL").clicked();
+                        export = ui.button("Export STL").clicked();
+                    });
+                    ui.horizontal(|ui| {
+                        duplicate = ui.button("Duplicate").clicked();
+                        delete = ui.button("Delete").clicked();
+                    });
+                    ui.checkbox(&mut self.snap, "Snap to 1 mm grid");
+                    ui.separator();
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
+                    ui.painter().rect_filled(
+                        rect,
+                        3.0,
+                        Color32::from_rgb(DEFAULT_MODEL_COLOR.r, DEFAULT_MODEL_COLOR.g, DEFAULT_MODEL_COLOR.b),
+                    );
+                    ui.label(format!("Default colour {}", DEFAULT_MODEL_COLOR.hex_string()));
+                    ui.label(format!("Plate {PLATE_SIZE_MM:.0} × {PLATE_SIZE_MM:.0} mm"));
+                    self.properties(ui);
+                    ui.separator();
+                    ui.label(self.notice.clone());
+                    if let Some(err) = self.painter.error() {
+                        ui.colored_label(Color32::LIGHT_RED, err);
                     }
-                    None => {
-                        ui.label("Nothing selected");
-                    }
-                }
-                ui.separator();
-                ui.label(self.notice.clone());
-                if let Some(err) = self.painter.error() {
-                    ui.colored_label(Color32::LIGHT_RED, err);
-                }
-                ui.add_space(8.0);
-                ui.small("Mouse: drag empty space to orbit, drag a shape to move it, right or middle button to pan, wheel to zoom.");
-                ui.small("Touch: one finger orbits or moves. Two fingers pan and pinch-zoom. A second finger puts a move back.");
+                    ui.add_space(8.0);
+                    ui.small("Drag empty space to orbit, drag a shape to move it. Right or middle button pans. Wheel or pinch zooms.");
+                    ui.small("Two fingers pan and pinch. A second finger puts a move back. Ctrl+Z undoes.");
+                });
             });
 
-        if add_box {
-            self.doc.add_box();
-            self.notice = "Added a box".into();
+        if let Some(shape) = chosen {
+            self.history.end();
+            self.history.begin(&self.doc);
+            let id = self.doc.add_shape(shape);
+            let name = self
+                .doc
+                .object(id)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| shape.label().into());
+            self.history.end();
+            self.notice = format!("Added {name}");
         }
-        if add_cylinder {
-            self.doc.add_cylinder();
-            self.notice = "Added a cylinder".into();
+        if undo {
+            self.history.undo(&mut self.doc);
+            self.notice = "Undid the last change".into();
+        }
+        if redo {
+            self.history.redo(&mut self.doc);
+            self.notice = "Redid the change".into();
+        }
+        if duplicate {
+            if let Some(id) = self.doc.selection() {
+                self.history.end();
+                self.history.begin(&self.doc);
+                self.doc.duplicate(id);
+                self.history.end();
+                self.notice = "Duplicated the selection".into();
+            }
+        }
+        if delete {
+            if let Some(id) = self.doc.selection() {
+                self.history.end();
+                self.history.begin(&self.doc);
+                self.doc.delete(id);
+                self.history.end();
+                self.notice = "Deleted the selection".into();
+            }
         }
         if import {
             files::pick_stl(self.incoming.clone());
@@ -438,8 +591,20 @@ impl eframe::App for PrintCaddyApp {
                 ui.painter().add(egui::PaintCallback { rect, callback });
             });
         let _ = view_rect;
+        if ctx.input(|input| input.pointer.any_released()) {
+            self.history.end();
+        }
         files::publish_status(&format!("{} | {}", self.status_text(), self.notice));
     }
+}
+
+fn number(ui: &mut egui::Ui, label: &str, value: &mut f32) -> bool {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(egui::DragValue::new(value).speed(0.1).fixed_decimals(2))
+    })
+    .inner
+    .changed()
 }
 
 fn midpoint(a: Pos2, b: Pos2) -> Pos2 {
