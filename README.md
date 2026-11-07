@@ -21,3 +21,5 @@ trunk serve
 ```
 
 GitHub Pages is built with `trunk build --release --public-url /printcaddy-rs/`.
+
+The workflow publishes on every push to `main`. GitHub's workflow token is not allowed to create the Pages site, so the first publish needs one setting: repository **Settings → Pages → Build and deployment → Source → GitHub Actions**. After that, the same workflow deploys on its own. The preview is [rrkennedy69.github.io/printcaddy-rs/](https://rrkennedy69.github.io/printcaddy-rs/).
