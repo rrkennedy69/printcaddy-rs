@@ -1,0 +1,9 @@
+[package]
+name = "printcaddy-core"
+version = "0.1.0"
+edition = "2021"
+description = "Document model, meshes, and STL import/export for PrintCaddy"
+license = "MIT"
+
+[dependencies]
+glam = "0.29"

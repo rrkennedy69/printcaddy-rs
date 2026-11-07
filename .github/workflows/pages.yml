@@ -1,0 +1,72 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test the document model
+        run: cargo test -p printcaddy-core
+
+      - name: Install trunk
+        run: |
+          curl -sSL -o trunk.tar.gz https://github.com/trunk-rs/trunk/releases/download/v0.22.1/trunk-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf trunk.tar.gz
+          sudo mv trunk /usr/local/bin/trunk
+          trunk --version
+
+      - name: Build the site
+        working-directory: crates/printcaddy-app
+        run: trunk build --release --public-url /printcaddy-rs/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: crates/printcaddy-app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Enable GitHub Pages
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const opts = { owner: context.repo.owner, repo: context.repo.repo };
+            try {
+              await github.rest.repos.getPages(opts);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.repos.createPagesSite({
+                ...opts,
+                build_type: "workflow",
+              });
+            }
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

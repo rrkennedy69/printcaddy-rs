@@ -1,0 +1,5 @@
+/target
+**/target
+**/dist
+**/*.wasm
+.DS_Store
