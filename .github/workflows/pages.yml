@@ -52,20 +52,25 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Creating the Pages site needs repository administration, which the
+      # workflow token is not allowed to hold. This step succeeds once the site
+      # exists. The first run may 403 here; the deploy step is what publishes.
       - name: Enable GitHub Pages
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
             const opts = { owner: context.repo.owner, repo: context.repo.repo };
             try {
               await github.rest.repos.getPages(opts);
+              return;
             } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.repos.createPagesSite({
-                ...opts,
-                build_type: "workflow",
-              });
+              if (error.status !== 404 && error.status !== 403) throw error;
             }
+            await github.rest.repos.createPagesSite({
+              ...opts,
+              build_type: "workflow",
+            });
 
       - name: Deploy
         id: deployment
