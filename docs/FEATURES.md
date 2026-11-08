@@ -26,6 +26,16 @@ A checked box means the Rust app at <https://rrkennedy69.github.io/printcaddy-rs
 - [x] Delete and duplicate
 - [x] Simple solids at the current app's starting sizes: box 20×20×20, rounded box 40×30×20 with 5 mm corners, cylinder 20×20×20, capsule 40×20×20, ellipse 26×16×20, hexagon polygon, sphere 22, cone, pyramid and wedge 20, round roof 20×20×10, half sphere 22×22×11, paraboloid 22×22×20, torus 22×22×5, tube 20×20×20 with a 4 mm wall, five-point star 40×40×10, heart 40×40×10. New bodies are still `#8A98A6`.
 
+## Milestone 3
+
+- [x] Move arrows on the world axes: red X, green Y, blue Z. A drag snaps with the 1 mm grid and is one undo step.
+- [x] Rotation arcs. Red (X) and green (Y) sit on the top of the selection. Blue (Z) sits on the bottom. They are drawn after the mesh, so the body cannot cover the grab point.
+- [x] A finished rotation is baked into the vertices and the numeric angles return to 0, 0, 0, including a body that still carried an angle. Handles and dimension lines then follow the plate axes.
+- [x] Dimension lines for the selection’s world width, depth, and height.
+- [x] View cube in the top-right. Click a face to jump there. Drag it to orbit.
+- [x] Multi-select. Shift-click, or Add to selection, toggles a body. A drag moves every selected body together.
+- [ ] Resize handles, the on-arc numeric angle editor, and the protractor wheel stay later.
+
 ## Shape library
 
 The lines below are the full tool, including every special parameter. Milestone 2 places the simple solids at the library's starting size and edits position, size, and rotation. A line stays open when a special parameter (a taper, a side count, a font) is still missing.

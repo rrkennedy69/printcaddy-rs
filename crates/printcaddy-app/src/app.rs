@@ -8,6 +8,7 @@ use printcaddy_core::{
 
 use crate::camera::Camera;
 use crate::files::{self, Incoming};
+use crate::overlay::{self, Gizmo};
 use crate::renderer::ViewportPainter;
 use crate::scene::{self, UploadedMesh};
 
@@ -27,12 +28,33 @@ enum Gesture {
         grab_z: f32,
         start_x: f32,
         start_z: f32,
+        group: Vec<(ObjectId, f32, f32)>,
         origin: Pos2,
         engaged: bool,
     },
     Pinch {
         dist: f32,
         mid: Pos2,
+    },
+    Axis {
+        gizmo: Gizmo,
+        origin: Pos2,
+        pivot: Pos2,
+        axis_tip: Pos2,
+        starts: Vec<(ObjectId, glam::Vec3)>,
+        engaged: bool,
+    },
+    Turn {
+        gizmo: Gizmo,
+        pivot_screen: Pos2,
+        pivot_world: glam::Vec3,
+        origin: Pos2,
+        starts: Vec<(ObjectId, glam::Vec3, glam::Vec3)>,
+        engaged: bool,
+    },
+    Cube {
+        origin: Pos2,
+        engaged: bool,
     },
 }
 
@@ -44,6 +66,9 @@ pub struct PrintCaddyApp {
     incoming: Incoming,
     history: History,
     snap: bool,
+    add_select: bool,
+    /// Face centres of the view cube from the last paint, for the next click.
+    cube_faces: Vec<(overlay::CubeFace, Pos2)>,
     notice: String,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
@@ -63,6 +88,8 @@ impl PrintCaddyApp {
             incoming: files::incoming_slot(),
             history: History::default(),
             snap: true,
+            add_select: false,
+            cube_faces: Vec::new(),
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
@@ -136,13 +163,15 @@ impl PrintCaddyApp {
         self.notice = format!("Exported {which} as STL");
     }
 
-    fn pointer_move(&mut self, rect: Rect, pos: Pos2) {
+    fn pointer_move(&mut self, rect: Rect, pos: Pos2, shift: bool) {
         match self.gesture {
             Gesture::Move {
                 id,
                 plane_y,
                 grab_x,
                 grab_z,
+                start_x,
+                start_z,
                 origin,
                 engaged,
                 ..
@@ -161,11 +190,86 @@ impl PrintCaddyApp {
                 let ray = self.ray_at(rect, pos);
                 if let Some(hit) = ray_plane_y(ray, plane_y) {
                     let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
-                    self.doc.move_object_to(
-                        id,
-                        snap_mm(hit.x - grab_x, step),
-                        snap_mm(hit.z - grab_z, step),
-                    );
+                    let x = snap_mm(hit.x - grab_x, step);
+                    let z = snap_mm(hit.z - grab_z, step);
+                    let dx = x - start_x;
+                    let dz = z - start_z;
+                    if let Gesture::Move { group, .. } = &self.gesture {
+                        let group = group.clone();
+                        for (member, sx, sz) in group {
+                            self.doc.move_object_to(member, sx + dx, sz + dz);
+                        }
+                    }
+                    let _ = id;
+                }
+            }
+            Gesture::Axis {
+                gizmo,
+                origin,
+                pivot,
+                axis_tip,
+                engaged,
+                ..
+            } => {
+                let now = pos.distance(origin) > DRAG_SLOP || engaged;
+                if !now {
+                    return;
+                }
+                if !engaged {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                }
+                if let Gesture::Axis { engaged, .. } = &mut self.gesture {
+                    *engaged = true;
+                }
+                let travel = overlay::axis_travel(origin, pos, pivot, axis_tip);
+                let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+                let delta = overlay::snapped_axis_delta(travel, step);
+                let axis = gizmo.axis() * delta;
+                if let Gesture::Axis { starts, .. } = &self.gesture {
+                    let starts = starts.clone();
+                    for (id, start) in starts {
+                        if let Some(object) = self.doc.object_mut(id) {
+                            object.position = start + axis;
+                        }
+                    }
+                }
+            }
+            Gesture::Turn {
+                gizmo,
+                pivot_screen,
+                pivot_world,
+                origin,
+                engaged,
+                ..
+            } => {
+                let now = pos.distance(origin) > DRAG_SLOP || engaged;
+                if !now {
+                    return;
+                }
+                if !engaged {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                }
+                if let Gesture::Turn { engaged, .. } = &mut self.gesture {
+                    *engaged = true;
+                }
+                let facing = (self.camera.eye() - pivot_world).dot(gizmo.axis());
+                let raw = overlay::screen_arc_degrees(pivot_screen, origin, pos, facing);
+                let degrees = overlay::snap_degrees(raw, if shift { 15.0 } else { 1.0 });
+                self.apply_turn(gizmo.axis(), pivot_world, degrees);
+                self.notice = format!("{degrees:.0}°");
+            }
+            Gesture::Cube { origin, engaged } => {
+                if pos.distance(origin) > DRAG_SLOP || engaged {
+                    self.camera.orbit(pos.x - origin.x, pos.y - origin.y);
+                    if let Gesture::Cube {
+                        origin, engaged, ..
+                    } = &mut self.gesture
+                    {
+                        *origin = pos;
+                        *engaged = true;
+                    }
                 }
             }
             Gesture::Orbit {
@@ -187,10 +291,28 @@ impl PrintCaddyApp {
         }
     }
 
-    fn begin_primary(&mut self, rect: Rect, pos: Pos2) {
+    fn begin_primary(&mut self, rect: Rect, pos: Pos2, add: bool) {
+        if overlay::view_cube_rect(rect).contains(pos) {
+            self.gesture = Gesture::Cube {
+                origin: pos,
+                engaged: false,
+            };
+            return;
+        }
+        let aspect = Self::aspect_of(rect);
+        if let Some((min, max)) = self.doc.selection_bounds() {
+            if let Some(gizmo) = overlay::hit_gizmo(&self.camera, aspect, rect, min, max, pos) {
+                self.start_gizmo(rect, pos, gizmo, min, max);
+                return;
+            }
+        }
         let ray = self.ray_at(rect, pos);
         if let Some(id) = self.doc.hit_test(ray) {
-            self.doc.select(Some(id));
+            if add {
+                self.doc.toggle_select(id);
+            } else if !self.doc.is_selected(id) {
+                self.doc.select(Some(id));
+            }
             let object = self.doc.object(id).unwrap();
             let plane_y = object.position.y;
             let (grab_x, grab_z) = if let Some(hit) = ray_plane_y(ray, plane_y) {
@@ -198,6 +320,20 @@ impl PrintCaddyApp {
             } else {
                 (0.0, 0.0)
             };
+            if !self.doc.is_selected(id) {
+                self.gesture = Gesture::None;
+                return;
+            }
+            let group = self
+                .doc
+                .selected_ids()
+                .iter()
+                .filter_map(|member| {
+                    self.doc
+                        .object(*member)
+                        .map(|body| (*member, body.position.x, body.position.z))
+                })
+                .collect();
             self.gesture = Gesture::Move {
                 id,
                 plane_y,
@@ -205,6 +341,7 @@ impl PrintCaddyApp {
                 grab_z,
                 start_x: object.position.x,
                 start_z: object.position.z,
+                group,
                 origin: pos,
                 engaged: false,
             };
@@ -218,24 +355,155 @@ impl PrintCaddyApp {
     }
 
     fn end_primary(&mut self) {
+        let cube_click = matches!(self.gesture, Gesture::Cube { engaged: false, .. });
+        let cube_at = match self.gesture {
+            Gesture::Cube { origin, .. } => Some(origin),
+            _ => None,
+        };
         match self.gesture {
             Gesture::Move {
                 engaged: false, id, ..
-            } => self.doc.select(Some(id)),
+            } => {
+                if !self.add_select {
+                    self.doc.select(Some(id));
+                }
+            }
             Gesture::Orbit { engaged: false, .. } => self.doc.select(None),
+            Gesture::Turn { engaged: true, .. } => {
+                self.doc.bake_rotations();
+                self.notice = "Rotation baked to 0, 0, 0".into();
+            }
+            Gesture::Cube { .. } => {}
+            _ => {}
+        }
+        if cube_click {
+            if let Some(origin) = cube_at {
+                if let Some(face) = overlay::hit_cube_face(&self.cube_faces, origin) {
+                    let (yaw, pitch) = face.yaw_pitch();
+                    self.camera.set_facing(yaw, pitch);
+                    self.notice = "View cube".into();
+                }
+            }
+        }
+        self.gesture = Gesture::None;
+        self.history.end();
+    }
+
+    fn rewind_gesture(&mut self) {
+        let places: Vec<(ObjectId, glam::Vec3, Option<glam::Vec3>)> = match &self.gesture {
             Gesture::Move {
                 id,
                 start_x,
                 start_z,
                 engaged: true,
                 ..
-            } => {
-                let _ = (id, start_x, start_z);
+            } => vec![(*id, glam::Vec3::new(*start_x, 0.0, *start_z), None)],
+            Gesture::Axis {
+                starts,
+                engaged: true,
+                ..
+            } => starts.iter().map(|(id, pos)| (*id, *pos, None)).collect(),
+            Gesture::Turn {
+                starts,
+                engaged: true,
+                ..
+            } => starts
+                .iter()
+                .map(|(id, pos, rot)| (*id, *pos, Some(*rot)))
+                .collect(),
+            _ => return,
+        };
+        for (id, position, rotation) in places {
+            if let Some(object) = self.doc.object_mut(id) {
+                if rotation.is_some() {
+                    object.position = position;
+                    object.rotation = rotation.unwrap();
+                } else if matches!(self.gesture, Gesture::Move { .. }) {
+                    object.position.x = position.x;
+                    object.position.z = position.z;
+                } else {
+                    object.position = position;
+                }
             }
-            _ => {}
         }
-        self.gesture = Gesture::None;
-        self.history.end();
+        self.history.cancel();
+    }
+
+    fn start_gizmo(
+        &mut self,
+        rect: Rect,
+        pos: Pos2,
+        gizmo: Gizmo,
+        min: glam::Vec3,
+        max: glam::Vec3,
+    ) {
+        let aspect = Self::aspect_of(rect);
+        let center = (min + max) * 0.5;
+        let pivot = overlay::project(&self.camera, aspect, rect, center).unwrap_or(pos);
+        let axis_tip = overlay::project(&self.camera, aspect, rect, center + gizmo.axis())
+            .unwrap_or(pivot + egui::vec2(20.0, 0.0));
+        if gizmo.is_rotation() {
+            let starts = self
+                .doc
+                .selected_ids()
+                .iter()
+                .filter_map(|id| {
+                    let object = self.doc.object(*id)?;
+                    Some((*id, object.position, object.rotation))
+                })
+                .collect();
+            self.gesture = Gesture::Turn {
+                gizmo,
+                pivot_screen: overlay::project(&self.camera, aspect, rect, center).unwrap_or(pos),
+                pivot_world: center,
+                origin: pos,
+                starts,
+                engaged: false,
+            };
+        } else {
+            let starts = self
+                .doc
+                .selected_ids()
+                .iter()
+                .filter_map(|id| self.doc.object(*id).map(|object| (*id, object.position)))
+                .collect();
+            self.gesture = Gesture::Axis {
+                gizmo,
+                origin: pos,
+                pivot,
+                axis_tip,
+                starts,
+                engaged: false,
+            };
+        }
+    }
+
+    fn apply_turn(&mut self, axis: glam::Vec3, pivot: glam::Vec3, degrees: f32) {
+        let Gesture::Turn { starts, .. } = &self.gesture else {
+            return;
+        };
+        let starts = starts.clone();
+        let turn = glam::Quat::from_axis_angle(axis, degrees.to_radians());
+        for (id, start_pos, start_rot) in starts {
+            let Some(object) = self.doc.object(id) else {
+                continue;
+            };
+            let (_, _, height) = object.size();
+            let start_center = start_pos + glam::Vec3::new(0.0, height * 0.5, 0.0);
+            let new_center = pivot + turn * (start_center - pivot);
+            let start_q = glam::Quat::from_euler(
+                glam::EulerRot::XYZ,
+                start_rot.x.to_radians(),
+                start_rot.y.to_radians(),
+                start_rot.z.to_radians(),
+            );
+            let (rx, ry, rz) = (turn * start_q).to_euler(glam::EulerRot::XYZ);
+            if let Some(object) = self.doc.object_mut(id) {
+                object.position = new_center - glam::Vec3::new(0.0, height * 0.5, 0.0);
+                object.rotation =
+                    glam::Vec3::new(rx.to_degrees(), ry.to_degrees(), rz.to_degrees());
+            }
+        }
     }
 
     fn handle_touch(&mut self, ctx: &egui::Context, rect: Rect) -> bool {
@@ -275,18 +543,7 @@ impl PrintCaddyApp {
         match self.touches.len() {
             0 => self.end_primary(),
             1 => {
-                if let Gesture::Move {
-                    id,
-                    start_x,
-                    start_z,
-                    engaged: true,
-                    ..
-                } = self.gesture
-                {
-                    // A second finger takes the move back, the way the current app does.
-                    self.doc.move_object_to(id, start_x, start_z);
-                    self.history.cancel();
-                }
+                self.rewind_gesture();
                 let pos = *self.touches.values().next().unwrap();
                 if self.touches.len() == 1 && matches!(self.gesture, Gesture::Pinch { .. }) {
                     self.gesture = Gesture::Orbit {
@@ -295,21 +552,11 @@ impl PrintCaddyApp {
                         engaged: true,
                     };
                 } else if matches!(self.gesture, Gesture::None) {
-                    self.begin_primary(rect, pos);
+                    self.begin_primary(rect, pos, self.add_select);
                 }
             }
             _ => {
-                if let Gesture::Move {
-                    id,
-                    start_x,
-                    start_z,
-                    engaged: true,
-                    ..
-                } = self.gesture
-                {
-                    self.doc.move_object_to(id, start_x, start_z);
-                    self.history.cancel();
-                }
+                self.rewind_gesture();
                 let pts: Vec<Pos2> = self.touches.values().copied().take(2).collect();
                 if pts.len() == 2 {
                     self.gesture = Gesture::Pinch {
@@ -341,7 +588,7 @@ impl PrintCaddyApp {
             return;
         }
         if let Some(pos) = self.touches.values().next().copied() {
-            self.pointer_move(rect, pos);
+            self.pointer_move(rect, pos, false);
         }
     }
 
@@ -365,11 +612,13 @@ impl PrintCaddyApp {
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = pointer.press_origin().or(pointer.interact_pos()) {
-                self.begin_primary(rect, pos);
+                let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
+                self.begin_primary(rect, pos, add);
             }
         } else if response.dragged_by(egui::PointerButton::Primary) {
             if let Some(pos) = pointer.interact_pos() {
-                self.pointer_move(rect, pos);
+                let shift = ctx.input(|input| input.modifiers.shift);
+                self.pointer_move(rect, pos, shift);
             }
         }
         if response.drag_stopped_by(egui::PointerButton::Primary)
@@ -379,7 +628,8 @@ impl PrintCaddyApp {
             self.end_primary();
         } else if response.clicked() {
             if let Some(pos) = pointer.interact_pos() {
-                self.begin_primary(rect, pos);
+                let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
+                self.begin_primary(rect, pos, add);
                 self.end_primary();
             }
         }
@@ -452,15 +702,17 @@ impl eframe::App for PrintCaddyApp {
             });
         if undo_key {
             self.history.undo(&mut self.doc);
+            self.doc.bake_rotations();
             self.notice = "Undid the last change".into();
         } else if redo_key {
             self.history.redo(&mut self.doc);
+            self.doc.bake_rotations();
             self.notice = "Redid the change".into();
         } else if delete_key {
-            if let Some(id) = self.doc.selection() {
+            if self.doc.selection().is_some() {
                 self.history.end();
                 self.history.begin(&self.doc);
-                self.doc.delete(id);
+                self.doc.delete_selected();
                 self.history.end();
                 self.notice = "Deleted the selection".into();
             }
@@ -505,6 +757,7 @@ impl eframe::App for PrintCaddyApp {
                         delete = ui.button("Delete").clicked();
                     });
                     ui.checkbox(&mut self.snap, "Snap to 1 mm grid");
+                    ui.checkbox(&mut self.add_select, "Add to selection");
                     ui.separator();
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
                     ui.painter().rect_filled(
@@ -540,10 +793,12 @@ impl eframe::App for PrintCaddyApp {
         }
         if undo {
             self.history.undo(&mut self.doc);
+            self.doc.bake_rotations();
             self.notice = "Undid the last change".into();
         }
         if redo {
             self.history.redo(&mut self.doc);
+            self.doc.bake_rotations();
             self.notice = "Redid the change".into();
         }
         if duplicate {
@@ -556,10 +811,10 @@ impl eframe::App for PrintCaddyApp {
             }
         }
         if delete {
-            if let Some(id) = self.doc.selection() {
+            if self.doc.selection().is_some() {
                 self.history.end();
                 self.history.begin(&self.doc);
-                self.doc.delete(id);
+                self.doc.delete_selected();
                 self.history.end();
                 self.notice = "Deleted the selection".into();
             }
@@ -589,9 +844,15 @@ impl eframe::App for PrintCaddyApp {
                     scene::draw_frame(&self.doc, self.camera.view_proj(aspect), &mut self.meshes);
                 let callback = self.painter.callback(frame);
                 ui.painter().add(egui::PaintCallback { rect, callback });
+                if let Some((min, max)) = self.doc.selection_bounds() {
+                    overlay::paint_gizmos(ui.painter(), &self.camera, aspect, rect, min, max);
+                }
+                let cube = overlay::view_cube_rect(rect);
+                self.cube_faces = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
             });
         let _ = view_rect;
         if ctx.input(|input| input.pointer.any_released()) {
+            self.doc.bake_rotations();
             self.history.end();
         }
         files::publish_status(&format!("{} | {}", self.status_text(), self.notice));

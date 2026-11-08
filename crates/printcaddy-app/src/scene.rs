@@ -106,7 +106,7 @@ pub fn draw_frame(
             id: object.id.0,
             revision: object.revision,
             color: object.color.to_rgb_f32(),
-            selected: doc.selection() == Some(object.id),
+            selected: doc.is_selected(object.id),
             model: object.model_matrix().to_cols_array(),
             mesh: mesh_cache_for(cache, object),
         })

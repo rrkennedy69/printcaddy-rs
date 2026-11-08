@@ -59,6 +59,11 @@ impl Camera {
         self.target += (-right * dx + up * dy) * scale;
     }
 
+    pub fn set_facing(&mut self, yaw: f32, pitch: f32) {
+        self.yaw = yaw;
+        self.pitch = pitch.clamp(-1.35, 1.35);
+    }
+
     pub fn zoom_factor(&mut self, factor: f32) {
         if factor.is_finite() && factor > 0.0 {
             self.distance = (self.distance * factor).clamp(40.0, 2400.0);

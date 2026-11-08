@@ -48,9 +48,9 @@ pub fn document_to_stl(doc: &Document, only_selected: bool) -> Vec<u8> {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
-    let selected = doc.selection();
+    let selected = doc.selected_ids();
     for object in doc.objects() {
-        if only_selected && selected.is_some() && selected != Some(object.id) {
+        if only_selected && !selected.is_empty() && !selected.contains(&object.id) {
             continue;
         }
         let mesh = object.world_mesh();

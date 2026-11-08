@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod files;
+mod overlay;
 mod renderer;
 mod scene;
 

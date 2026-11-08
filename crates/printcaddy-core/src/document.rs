@@ -151,7 +151,7 @@ pub struct Document {
     next_id: u64,
     box_count: u32,
     cylinder_count: u32,
-    selection: Option<ObjectId>,
+    selection: Vec<ObjectId>,
 }
 
 impl Default for Document {
@@ -167,7 +167,7 @@ impl Document {
             next_id: 1,
             box_count: 0,
             cylinder_count: 0,
-            selection: None,
+            selection: Vec::new(),
         }
     }
 
@@ -183,12 +183,36 @@ impl Document {
         self.objects.iter_mut().find(|o| o.id == id)
     }
 
+    /// The last selected body. Properties and the status line follow this one.
     pub fn selection(&self) -> Option<ObjectId> {
-        self.selection
+        self.selection.last().copied()
+    }
+
+    pub fn selected_ids(&self) -> &[ObjectId] {
+        &self.selection
+    }
+
+    pub fn is_selected(&self, id: ObjectId) -> bool {
+        self.selection.contains(&id)
     }
 
     pub fn select(&mut self, id: Option<ObjectId>) {
-        self.selection = id.filter(|id| self.objects.iter().any(|o| o.id == *id));
+        self.selection.clear();
+        if let Some(id) = id.filter(|id| self.objects.iter().any(|object| object.id == *id)) {
+            self.selection.push(id);
+        }
+    }
+
+    /// Shift-click and the touch “add” switch. A selected body is removed; a new one is added.
+    pub fn toggle_select(&mut self, id: ObjectId) {
+        if !self.objects.iter().any(|object| object.id == id) {
+            return;
+        }
+        if let Some(index) = self.selection.iter().position(|selected| *selected == id) {
+            self.selection.remove(index);
+        } else {
+            self.selection.push(id);
+        }
     }
 
     pub fn add_box(&mut self) -> ObjectId {
@@ -306,11 +330,82 @@ impl Document {
         object.revision = object.revision.saturating_add(1);
     }
 
+    pub fn delete_selected(&mut self) {
+        let doomed = self.selection.clone();
+        self.objects.retain(|object| !doomed.contains(&object.id));
+        self.selection.clear();
+    }
+
     pub fn delete(&mut self, id: ObjectId) {
         self.objects.retain(|object| object.id != id);
-        if self.selection == Some(id) {
-            self.selection = None;
+        self.selection.retain(|selected| *selected != id);
+    }
+
+    /// Move every selected body by the same delta. Y is included so the lift arrow can raise them.
+    pub fn translate_selected(&mut self, delta: Vec3) {
+        let ids = self.selection.clone();
+        for id in ids {
+            if let Some(object) = self.object_mut(id) {
+                object.position += delta;
+            }
         }
+    }
+
+    /// World-axis box around the selection. None when nothing is selected.
+    pub fn selection_bounds(&self) -> Option<(Vec3, Vec3)> {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for id in &self.selection {
+            let Some(object) = self.object(*id) else {
+                continue;
+            };
+            let (lo, hi) = object.world_mesh().bounds();
+            min = min.min(lo);
+            max = max.max(hi);
+        }
+        if min.x.is_finite() {
+            Some((min, max))
+        } else {
+            None
+        }
+    }
+
+    /// Write every non-zero angle into the vertices and store 0, 0, 0.
+    /// The body becomes a mesh seated on its new world bottom-centre, so the
+    /// handles and dimension lines sit on the plate axes again.
+    pub fn bake_rotations(&mut self) {
+        let ids: Vec<ObjectId> = self
+            .objects
+            .iter()
+            .filter(|object| object.rotation.length_squared() > 1e-8)
+            .map(|object| object.id)
+            .collect();
+        for id in ids {
+            self.bake_one(id);
+        }
+    }
+
+    fn bake_one(&mut self, id: ObjectId) {
+        let Some(object) = self.object(id) else {
+            return;
+        };
+        if object.rotation.length_squared() <= 1e-8 {
+            return;
+        }
+        let mut mesh = object.world_mesh();
+        let (min, max) = mesh.bounds();
+        let center_x = (min.x + max.x) * 0.5;
+        let center_z = (min.z + max.z) * 0.5;
+        for point in &mut mesh.positions {
+            point[0] -= center_x;
+            point[1] -= min.y;
+            point[2] -= center_z;
+        }
+        let object = self.object_mut(id).unwrap();
+        object.kind = ObjectKind::Mesh { mesh };
+        object.position = Vec3::new(center_x, min.y, center_z);
+        object.rotation = Vec3::ZERO;
+        object.revision = object.revision.saturating_add(1);
     }
 
     pub fn duplicate(&mut self, id: ObjectId) -> Option<ObjectId> {
@@ -357,7 +452,8 @@ impl Document {
             rotation: Vec3::ZERO,
             revision: 1,
         });
-        self.selection = Some(id);
+        self.selection.clear();
+        self.selection.push(id);
         id
     }
 
