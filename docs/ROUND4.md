@@ -4,7 +4,7 @@ Approved scope. Rounds 5–9 stay closed. Orbit, snap, world handles, baked angl
 
 ## Drawing
 
-Sketch sits on the build plate. X is to the right, Z is depth, and a finished extrude grows up in Y. A click or a tap on the plate adds a point. A drag still orbits, and two fingers still pan and pinch. Points snap with the 1 mm grid when snap is on.
+Sketch sits on the build plate. X is to the right, Z is depth, and a finished extrude grows up in Y. A click or a tap on the plate adds a point. A drag still orbits, and two fingers still pan and pinch. Points snap with the 1 mm grid when snap is on. Stored coordinates use `u = X` and `v = −Z`, so the extrude direction `u × v` is +Y. Revolve spins around `u = 0`, which is the plate line X = 0. There is no per-point undo; the finished solid is one undo step.
 
 The profile is the outline. The path is a separate open chain, used only by sweep. Close is optional: Finish treats three or more points as a loop. Cancel drops the drawing and leaves an edited body unchanged. Edit sketch reopens the stored profile and path of the selected sketch body.
 
@@ -14,7 +14,7 @@ The profile is the outline. The path is a separate open chain, used only by swee
 - **Revolve.** The profile spins around the plate line X = 0 (the Z axis) by the typed angle (default 360°). The profile must lie on one side of that axis.
 - **Sweep.** The closed profile is carried along the path, staying perpendicular to it. A curved path makes a curved tube.
 
-Each finish is one undo step. Redo puts it back.
+Each finish is one undo step. Redo puts it back. A new solid is seated so its lowest point is on the plate and its footprint is centred. Editing a sketch that has been moved keeps that place.
 
 ## What is rejected
 

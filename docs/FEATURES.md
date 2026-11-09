@@ -83,6 +83,13 @@ The lines below are the full tool, including every special parameter. Milestone 
 
 ## Sketching
 
+Round 4 draws a polyline on the plate and finishes it. Arcs, curves, constraints, construction lines, and a helical revolve are still only in the TypeScript app.
+
+- [x] Draw a profile by clicking or tapping the plate (drag still orbits; points snap to 1 mm)
+- [x] Separate open path for sweep
+- [x] Extrude to a typed height, revolve by a typed angle around X = 0, sweep the profile along the path
+- [x] Cancel a drawing, and edit the stored profile and path of a sketch body
+- [x] Reject a short, flat, duplicated, or self-crossing outline, a revolve that crosses the axis, and a sweep with no path, and say why
 - [ ] Sketch mode, separate from the 3D toolbar
 - [ ] Line, arc, Bézier, smooth curve
 - [ ] Construction lines
@@ -95,12 +102,12 @@ The lines below are the full tool, including every special parameter. Milestone 
 - [ ] Mirror
 - [ ] Select, refine, erase
 - [ ] Picture as a tracing template
-- [ ] Extrude, revolve (including a pitched helical revolve), sweep along a path
+- [ ] Extrude, revolve (including a pitched helical revolve), sweep along a path — polyline extrude, revolve, and sweep are in; the helical pitch is not
 - [ ] Stroke build (frame inside, outside, or centred; open stroke with flat, square, or round ends)
 - [ ] Fill and silhouette modes
 - [ ] Slanted walls for stamps
 - [ ] Sketch undo and redo, copy, paste, duplicate, delete
-- [ ] Edit an existing sketch body
+- [x] Edit an existing sketch body
 
 ## Modelling tools
 

@@ -5,6 +5,7 @@ mod document;
 mod history;
 mod mesh;
 mod ray;
+mod sketch;
 mod solids;
 mod stl;
 
@@ -16,6 +17,7 @@ pub use document::{
 pub use history::History;
 pub use mesh::Mesh;
 pub use ray::{ray_plane_y, Ray};
+pub use sketch::{build_sketch, is_closed, seat_sketch, SketchDef, SketchError, SketchOp};
 pub use solids::Shape;
 pub use stl::{document_to_stl, import_stl, mesh_from_stl, mesh_to_stl_binary, StlError};
 

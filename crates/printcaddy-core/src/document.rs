@@ -5,6 +5,7 @@ use glam::Mat4;
 use crate::color::{Color, DEFAULT_MODEL_COLOR};
 use crate::mesh::{box_mesh, cylinder_mesh, Mesh};
 use crate::ray::{ray_aabb, ray_cylinder, Ray};
+use crate::sketch::{build_sketch, seat_sketch, SketchDef, SketchError};
 use crate::solids::{shape_mesh, Shape};
 
 pub const DEFAULT_BOX: (f32, f32, f32) = (20.0, 20.0, 20.0);
@@ -37,6 +38,9 @@ pub enum ObjectKind {
     },
     Mesh {
         mesh: Mesh,
+    },
+    Sketch {
+        def: SketchDef,
     },
 }
 
@@ -74,6 +78,11 @@ impl Object {
                 height,
             } => shape_mesh(*shape, *width, *depth, *height),
             ObjectKind::Mesh { mesh } => mesh.clone(),
+            ObjectKind::Sketch { def } => build_sketch(def).unwrap_or_else(|_| Mesh {
+                positions: Vec::new(),
+                normals: Vec::new(),
+                indices: Vec::new(),
+            }),
         }
     }
 
@@ -95,6 +104,10 @@ impl Object {
                 let (min, max) = mesh.bounds();
                 (max.x - min.x, max.z - min.z, max.y - min.y)
             }
+            ObjectKind::Sketch { .. } => {
+                let (min, max) = self.local_mesh().bounds();
+                (max.x - min.x, max.z - min.z, max.y - min.y)
+            }
         }
     }
 
@@ -103,7 +116,7 @@ impl Object {
             ObjectKind::Box { .. } => Some(Shape::Box),
             ObjectKind::Cylinder { .. } => Some(Shape::Cylinder),
             ObjectKind::Primitive { shape, .. } => Some(*shape),
-            ObjectKind::Mesh { .. } => None,
+            ObjectKind::Mesh { .. } | ObjectKind::Sketch { .. } => None,
         }
     }
 
@@ -173,6 +186,13 @@ impl Document {
 
     pub fn objects(&self) -> &[Object] {
         &self.objects
+    }
+
+    pub fn sketch(&self, id: ObjectId) -> Option<&SketchDef> {
+        match &self.object(id)?.kind {
+            ObjectKind::Sketch { def } => Some(def),
+            _ => None,
+        }
     }
 
     pub fn object(&self, id: ObjectId) -> Option<&Object> {
@@ -263,6 +283,39 @@ impl Document {
         }
     }
 
+    pub fn add_sketch(&mut self, def: SketchDef) -> Result<ObjectId, SketchError> {
+        let (seated, at) = seat_sketch(def)?;
+        let count = self
+            .objects
+            .iter()
+            .filter(|object| matches!(object.kind, ObjectKind::Sketch { .. }))
+            .count()
+            + 1;
+        let id = self.spawn(
+            format!("Sketch {count}"),
+            ObjectKind::Sketch { def: seated },
+        );
+        if let Some(object) = self.object_mut(id) {
+            // The footprint stays centred, and the lowest point sits on the plate.
+            object.position = Vec3::new(at.x, 0.0, at.z);
+        }
+        Ok(id)
+    }
+
+    pub fn replace_sketch(&mut self, id: ObjectId, def: SketchDef) -> Result<(), SketchError> {
+        let (seated, at) = seat_sketch(def)?;
+        let object = self
+            .object_mut(id)
+            .ok_or(SketchError::TooFewProfilePoints)?;
+        object.kind = ObjectKind::Sketch { def: seated };
+        // `at` is the new bottom-centre in the sketch's own coordinates, which are
+        // already local for an edited body. Adding it keeps the body's place on the plate.
+        object.position += at;
+        object.rotation = Vec3::ZERO;
+        object.revision = object.revision.saturating_add(1);
+        Ok(())
+    }
+
     pub fn add_mesh(&mut self, name: impl Into<String>, mut mesh: Mesh) -> ObjectId {
         seat_on_plate(&mut mesh);
         self.spawn(name.into(), ObjectKind::Mesh { mesh })
@@ -291,6 +344,10 @@ impl Document {
         let width = width.max(0.2);
         let depth = depth.max(0.2);
         let height = height.max(0.2);
+        let (cw, cd, ch) = match self.object(id) {
+            Some(object) => object.size(),
+            None => return,
+        };
         let Some(object) = self.object_mut(id) else {
             return;
         };
@@ -326,6 +383,20 @@ impl Document {
                 *h = height;
             }
             ObjectKind::Mesh { mesh } => scale_mesh_to(mesh, width, depth, height),
+            ObjectKind::Sketch { def } => {
+                let sx = width / cw.max(0.2);
+                let sz = depth / cd.max(0.2);
+                let sy = height / ch.max(0.2);
+                for point in &mut def.profile {
+                    point[0] *= sx;
+                    point[1] *= sz;
+                }
+                for point in &mut def.path {
+                    point[0] *= sx;
+                    point[1] *= sz;
+                }
+                def.height = (def.height * sy).max(0.2);
+            }
         }
         object.revision = object.revision.saturating_add(1);
     }
@@ -390,6 +461,27 @@ impl Document {
             return;
         };
         if object.rotation.length_squared() <= 1e-8 {
+            return;
+        }
+        if let ObjectKind::Sketch { def } = &object.kind {
+            let model = object.model_matrix();
+            let mut turned = def.clone();
+            turned.origin = model.transform_point3(Vec3::from(def.origin)).to_array();
+            turned.axis_u = model
+                .transform_vector3(Vec3::from(def.axis_u))
+                .normalize_or_zero()
+                .to_array();
+            turned.axis_v = model
+                .transform_vector3(Vec3::from(def.axis_v))
+                .normalize_or_zero()
+                .to_array();
+            if let Ok((seated, at)) = seat_sketch(turned) {
+                let object = self.object_mut(id).unwrap();
+                object.kind = ObjectKind::Sketch { def: seated };
+                object.position = at;
+                object.rotation = Vec3::ZERO;
+                object.revision = object.revision.saturating_add(1);
+            }
             return;
         }
         let mut mesh = object.world_mesh();
@@ -531,6 +623,10 @@ fn hit_object(object: &Object, ray: Ray) -> Option<f32> {
         ObjectKind::Cylinder { radius, height, .. } => ray_cylinder(local, *radius, *height),
         ObjectKind::Mesh { mesh } => {
             let (min, max) = mesh.bounds();
+            ray_aabb(local, min, max)
+        }
+        ObjectKind::Sketch { .. } => {
+            let (min, max) = object.local_mesh().bounds();
             ray_aabb(local, min, max)
         }
     }

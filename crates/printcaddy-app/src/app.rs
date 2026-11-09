@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    document_to_stl, import_stl, ray_plane_y, snap_mm, Document, History, ObjectId, Shape,
-    DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
+    document_to_stl, import_stl, ray_plane_y, snap_mm, Document, History, ObjectId, Ray, Shape,
+    SketchDef, SketchOp, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -67,6 +67,14 @@ pub struct PrintCaddyApp {
     history: History,
     snap: bool,
     add_select: bool,
+    sketching: bool,
+    draw_path: bool,
+    profile: Vec<[f32; 2]>,
+    sketch_path: Vec<[f32; 2]>,
+    sketch_height: f32,
+    sketch_angle: f32,
+    editing_sketch: Option<ObjectId>,
+    pending_point: Option<[f32; 2]>,
     /// Face centres of the view cube from the last paint, for the next click.
     cube_faces: Vec<(overlay::CubeFace, Pos2)>,
     notice: String,
@@ -89,6 +97,14 @@ impl PrintCaddyApp {
             history: History::default(),
             snap: true,
             add_select: false,
+            sketching: false,
+            draw_path: false,
+            profile: Vec::new(),
+            sketch_path: Vec::new(),
+            sketch_height: 10.0,
+            sketch_angle: 360.0,
+            editing_sketch: None,
+            pending_point: None,
             cube_faces: Vec::new(),
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
@@ -106,6 +122,172 @@ impl PrintCaddyApp {
     fn ray_at(&self, rect: Rect, pos: Pos2) -> printcaddy_core::Ray {
         let aspect = Self::aspect_of(rect);
         scene::screen_ray(rect, pos, self.camera.view_proj(aspect))
+    }
+
+    fn begin_sketch(&mut self) {
+        self.sketching = true;
+        self.draw_path = false;
+        self.profile.clear();
+        self.sketch_path.clear();
+        self.editing_sketch = None;
+        self.pending_point = None;
+        self.notice = "Click the plate to draw the profile.".into();
+    }
+
+    fn edit_selected_sketch(&mut self) {
+        let Some(id) = self.doc.selection() else {
+            self.notice = "Select a sketch to edit.".into();
+            return;
+        };
+        let Some(def) = self.doc.sketch(id).cloned() else {
+            self.notice = "The selection is not a sketch.".into();
+            return;
+        };
+        self.profile = def.profile;
+        self.sketch_path = def.path;
+        self.sketch_height = def.height;
+        self.sketch_angle = def.angle_deg;
+        self.editing_sketch = Some(id);
+        self.sketching = true;
+        self.draw_path = false;
+        self.pending_point = None;
+        self.notice = "Editing the sketch. Cancel leaves it unchanged.".into();
+    }
+
+    fn cancel_sketch(&mut self) {
+        self.sketching = false;
+        self.draw_path = false;
+        self.profile.clear();
+        self.sketch_path.clear();
+        self.editing_sketch = None;
+        self.pending_point = None;
+        self.notice = "Sketch cancelled.".into();
+    }
+
+    fn finish_sketch(&mut self, op: SketchOp) {
+        let def = if let Some(id) = self.editing_sketch {
+            let Some(mut stored) = self.doc.sketch(id).cloned() else {
+                self.notice = "That sketch is no longer in the document.".into();
+                return;
+            };
+            stored.profile = self.profile.clone();
+            stored.path = self.sketch_path.clone();
+            stored.op = op;
+            stored.height = self.sketch_height;
+            stored.angle_deg = self.sketch_angle;
+            stored
+        } else {
+            SketchDef::on_plate(
+                op,
+                self.profile.clone(),
+                self.sketch_path.clone(),
+                self.sketch_height,
+                self.sketch_angle,
+            )
+        };
+        self.history.end();
+        self.history.begin(&self.doc);
+        let result = if let Some(id) = self.editing_sketch {
+            self.doc.replace_sketch(id, def).map(|()| id)
+        } else {
+            self.doc.add_sketch(def)
+        };
+        match result {
+            Ok(_) => {
+                self.history.end();
+                let name = match op {
+                    SketchOp::Extrude => "Extruded",
+                    SketchOp::Revolve => "Revolved",
+                    SketchOp::Sweep => "Swept",
+                };
+                self.notice = format!("{name} the sketch.");
+                self.sketching = false;
+                self.pending_point = None;
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err.to_string();
+            }
+        }
+    }
+
+    fn sketch_uv(&self, rect: Rect, pos: Pos2) -> Option<[f32; 2]> {
+        let ray = self.ray_at(rect, pos);
+        let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+        if let Some(id) = self.editing_sketch {
+            let object = self.doc.object(id)?;
+            let def = self.doc.sketch(id)?;
+            let origin = object.position + glam::Vec3::from(def.origin);
+            let axis_u = glam::Vec3::from(def.axis_u);
+            let axis_v = glam::Vec3::from(def.axis_v);
+            let hit = ray_onto_plane(ray, origin, axis_u.cross(axis_v))?;
+            let delta = hit - origin;
+            return Some([
+                snap_mm(delta.dot(axis_u), step),
+                snap_mm(delta.dot(axis_v), step),
+            ]);
+        }
+        let hit = ray_plane_y(ray, 0.0)?;
+        Some([snap_mm(hit.x, step), snap_mm(-hit.z, step)])
+    }
+
+    fn uv_world(&self, uv: [f32; 2]) -> glam::Vec3 {
+        if let Some(id) = self.editing_sketch {
+            if let (Some(object), Some(def)) = (self.doc.object(id), self.doc.sketch(id)) {
+                return object.position
+                    + glam::Vec3::from(def.origin)
+                    + glam::Vec3::from(def.axis_u) * uv[0]
+                    + glam::Vec3::from(def.axis_v) * uv[1];
+            }
+        }
+        glam::Vec3::new(uv[0], 0.0, -uv[1])
+    }
+
+    fn paint_sketch(&self, painter: &egui::Painter, aspect: f32, rect: Rect) {
+        if !self.sketching {
+            return;
+        }
+        self.paint_chain(
+            painter,
+            aspect,
+            rect,
+            &self.profile,
+            Color32::from_rgb(255, 196, 64),
+            true,
+        );
+        self.paint_chain(
+            painter,
+            aspect,
+            rect,
+            &self.sketch_path,
+            Color32::from_rgb(80, 200, 255),
+            false,
+        );
+    }
+
+    fn paint_chain(
+        &self,
+        painter: &egui::Painter,
+        aspect: f32,
+        rect: Rect,
+        points: &[[f32; 2]],
+        color: Color32,
+        close: bool,
+    ) {
+        let screen: Vec<Pos2> = points
+            .iter()
+            .filter_map(|uv| overlay::project(&self.camera, aspect, rect, self.uv_world(*uv)))
+            .collect();
+        let stroke = egui::Stroke::new(2.0_f32, color);
+        for pair in screen.windows(2) {
+            painter.line_segment([pair[0], pair[1]], stroke);
+        }
+        if close && screen.len() >= 3 {
+            painter.line_segment([screen[screen.len() - 1], screen[0]], stroke);
+        }
+        for point in screen {
+            painter.circle_filled(point, 4.0, color);
+        }
     }
 
     fn status_text(&self) -> String {
@@ -292,6 +474,15 @@ impl PrintCaddyApp {
     }
 
     fn begin_primary(&mut self, rect: Rect, pos: Pos2, add: bool) {
+        if self.sketching && !overlay::view_cube_rect(rect).contains(pos) {
+            self.pending_point = self.sketch_uv(rect, pos);
+            self.gesture = Gesture::Orbit {
+                last: pos,
+                origin: pos,
+                engaged: false,
+            };
+            return;
+        }
         if overlay::view_cube_rect(rect).contains(pos) {
             self.gesture = Gesture::Cube {
                 origin: pos,
@@ -355,6 +546,29 @@ impl PrintCaddyApp {
     }
 
     fn end_primary(&mut self) {
+        if self.sketching {
+            if let Gesture::Orbit { engaged: false, .. } = self.gesture {
+                if let Some(uv) = self.pending_point.take() {
+                    if self.draw_path {
+                        self.sketch_path.push(uv);
+                    } else {
+                        self.profile.push(uv);
+                    }
+                    self.notice = format!(
+                        "Profile {} path {} at {:.0}, {:.0}",
+                        self.profile.len(),
+                        self.sketch_path.len(),
+                        uv[0],
+                        uv[1]
+                    );
+                }
+            } else {
+                self.pending_point = None;
+            }
+            self.gesture = Gesture::None;
+            self.history.end();
+            return;
+        }
         let cube_click = matches!(self.gesture, Gesture::Cube { engaged: false, .. });
         let cube_at = match self.gesture {
             Gesture::Cube { origin, .. } => Some(origin),
@@ -759,6 +973,48 @@ impl eframe::App for PrintCaddyApp {
                     ui.checkbox(&mut self.snap, "Snap to 1 mm grid");
                     ui.checkbox(&mut self.add_select, "Add to selection");
                     ui.separator();
+                    ui.label("Sketch");
+                    if self.sketching {
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(!self.draw_path, "Profile").clicked() {
+                                self.draw_path = false;
+                            }
+                            if ui.selectable_label(self.draw_path, "Path").clicked() {
+                                self.draw_path = true;
+                            }
+                        });
+                        number(ui, "Height", &mut self.sketch_height);
+                        number(ui, "Angle", &mut self.sketch_angle);
+                        ui.horizontal(|ui| {
+                            if ui.button("Extrude").clicked() {
+                                self.finish_sketch(SketchOp::Extrude);
+                            }
+                            if ui.button("Revolve").clicked() {
+                                self.finish_sketch(SketchOp::Revolve);
+                            }
+                            if ui.button("Sweep").clicked() {
+                                self.finish_sketch(SketchOp::Sweep);
+                            }
+                        });
+                        if ui.button("Cancel").clicked() {
+                            self.cancel_sketch();
+                        }
+                        ui.small(format!(
+                            "Profile {} points, path {} points. Click the plate to add one. Drag to orbit.",
+                            self.profile.len(),
+                            self.sketch_path.len()
+                        ));
+                    } else {
+                        ui.horizontal(|ui| {
+                            if ui.button("Draw sketch").clicked() {
+                                self.begin_sketch();
+                            }
+                            if ui.button("Edit sketch").clicked() {
+                                self.edit_selected_sketch();
+                            }
+                        });
+                    }
+                    ui.separator();
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
                     ui.painter().rect_filled(
                         rect,
@@ -847,6 +1103,7 @@ impl eframe::App for PrintCaddyApp {
                 if let Some((min, max)) = self.doc.selection_bounds() {
                     overlay::paint_gizmos(ui.painter(), &self.camera, aspect, rect, min, max);
                 }
+                self.paint_sketch(ui.painter(), aspect, rect);
                 let cube = overlay::view_cube_rect(rect);
                 self.cube_faces = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
             });
@@ -874,4 +1131,20 @@ fn midpoint(a: Pos2, b: Pos2) -> Pos2 {
 
 fn touch_key(id: egui::TouchId) -> u64 {
     id.0
+}
+
+fn ray_onto_plane(ray: Ray, origin: glam::Vec3, normal: glam::Vec3) -> Option<glam::Vec3> {
+    let normal = normal.normalize_or_zero();
+    if normal.length_squared() < 1e-8 {
+        return None;
+    }
+    let denom = ray.direction.dot(normal);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = (origin - ray.origin).dot(normal) / denom;
+    if t < 0.0 {
+        return None;
+    }
+    Some(ray.origin + ray.direction * t)
 }

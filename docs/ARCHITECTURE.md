@@ -44,7 +44,7 @@ Checked work is in the app today. Everything else is still only in the TypeScrip
 1. **Viewport.** Orbit, pan, zoom, plate grid, box, cylinder, select, move, STL in and out, default colour. Done.
 2. **Arrange.** Undo and redo, delete, duplicate, typed position, size and rotation, 1 mm snap, and the simple solids at the current app's starting sizes. Done. Multi-select, text, and name tags are still open.
 3. **Handles.** Move arrows, rotate arcs that bake back to 0/0/0, dimension lines, the view cube, and multi-select. Done. Resize handles and the protractor wheel stay later.
-4. **Sketches.** Lines, arcs, curves, constraints, extrude, revolve, and sweep. The solver lives in the core crate.
+4. **Sketches.** A plate polyline can be extruded, revolved, or swept. The solid is built in the core crate, and a baked rotation keeps the profile. Arcs, curves, and constraints are still later.
 5. **Booleans.** Solid and hole, group, bundle, intersection, hull, split, fillet, chamfer, shell. A Rust mesh kernel (Manifold or an equivalent) behind the core crate, off the UI thread when the operation is heavy.
 6. **Exchange.** 3MF, OBJ, SVG, DXF, and STEP, including colours and multi-body files.
 7. **Bambu.** Extra plates in rows of three, the filament catalogue and loaded-filament import, Bambu 3MF export, Send to Bambu Studio.
