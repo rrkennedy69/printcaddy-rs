@@ -16,10 +16,11 @@ pub const CYLINDER_SEGMENTS: u32 = 32;
 /// The current app's default snap step, in millimetres.
 pub const DEFAULT_SNAP_MM: f32 = 1.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ObjectId(pub u64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ObjectKind {
     Box {
         width: f32,
@@ -75,7 +76,7 @@ impl std::fmt::Display for GroupError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Object {
     pub id: ObjectId,
     pub name: String,
@@ -242,6 +243,33 @@ impl Document {
 
     pub fn objects(&self) -> &[Object] {
         &self.objects
+    }
+
+    pub(crate) fn next_id_value(&self) -> u64 {
+        self.next_id
+    }
+
+    pub(crate) fn from_objects(objects: Vec<Object>, next_id: u64) -> Self {
+        let mut doc = Self::new();
+        doc.box_count = objects
+            .iter()
+            .filter(|object| matches!(object.kind, ObjectKind::Box { .. }))
+            .count() as u32;
+        doc.cylinder_count = objects
+            .iter()
+            .filter(|object| matches!(object.kind, ObjectKind::Cylinder { .. }))
+            .count() as u32;
+        let highest = objects.iter().map(|object| object.id.0).max().unwrap_or(0);
+        doc.next_id = next_id.max(highest.saturating_add(1)).max(1);
+        doc.objects = objects;
+        doc
+    }
+
+    pub fn set_color(&mut self, id: ObjectId, color: crate::color::Color) {
+        if let Some(object) = self.object_mut(id) {
+            object.color = color;
+            object.revision = object.revision.saturating_add(1);
+        }
     }
 
     pub fn sketch(&self, id: ObjectId) -> Option<&SketchDef> {

@@ -1,9 +1,12 @@
 mod app;
 mod camera;
+mod drive;
 mod files;
+mod library;
 mod overlay;
 mod renderer;
 mod scene;
+mod theme;
 
 use app::PrintCaddyApp;
 

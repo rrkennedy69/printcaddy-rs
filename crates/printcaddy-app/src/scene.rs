@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use printcaddy_core::{Document, Object, GRID_MAJOR_MM, GRID_MINOR_MM, PLATE_SIZE_MM};
@@ -27,6 +27,7 @@ pub struct DrawFrame {
     pub view_proj: [f32; 16],
     pub objects: Vec<DrawObject>,
     pub grid: Arc<GridLines>,
+    pub clear: [f32; 4],
 }
 
 pub struct GridLines {
@@ -34,11 +35,8 @@ pub struct GridLines {
 }
 
 impl GridLines {
-    pub fn build() -> Self {
+    pub fn colored(minor: [f32; 3], major: [f32; 3], border: [f32; 3]) -> Self {
         let half = PLATE_SIZE_MM * 0.5;
-        let minor = [0.23, 0.31, 0.36];
-        let major = [0.42, 0.53, 0.60];
-        let border = [0.62, 0.72, 0.78];
         let mut vertices = Vec::new();
         let mut line = |a: [f32; 3], b: [f32; 3], color: [f32; 3]| {
             vertices.extend_from_slice(&[a[0], a[1], a[2], color[0], color[1], color[2]]);
@@ -72,8 +70,6 @@ impl GridLines {
     }
 }
 
-static GRID: LazyLock<Arc<GridLines>> = LazyLock::new(|| Arc::new(GridLines::build()));
-
 pub fn mesh_cache_for(
     cache: &mut HashMap<(u64, u64), Arc<UploadedMesh>>,
     object: &Object,
@@ -96,6 +92,9 @@ pub fn draw_frame(
     doc: &Document,
     view_proj: Mat4,
     cache: &mut HashMap<(u64, u64), Arc<UploadedMesh>>,
+    grid: Arc<GridLines>,
+    clear: [f32; 4],
+    xray: bool,
 ) -> DrawFrame {
     let live: std::collections::HashSet<(u64, u64)> =
         doc.objects().iter().map(|o| (o.id.0, o.revision)).collect();
@@ -106,6 +105,7 @@ pub fn draw_frame(
         .filter(|object| doc.is_shown(object.id))
         .map(|object| {
             let mut color = object.color.to_rgb_f32();
+            let mut alpha = doc.display_alpha(object.id);
             if object.hole {
                 color = [
                     color[0] * 0.35 + 0.20,
@@ -113,12 +113,20 @@ pub fn draw_frame(
                     color[2] * 0.45 + 0.62,
                 ];
             }
+            if xray {
+                color = [
+                    color[0] * 0.35 + 0.55,
+                    color[1] * 0.25 + 0.45,
+                    color[2] * 0.35 + 0.75,
+                ];
+                alpha = alpha.min(0.34);
+            }
             DrawObject {
                 id: object.id.0,
                 revision: object.revision,
                 color,
                 selected: doc.is_selected(object.id),
-                alpha: doc.display_alpha(object.id),
+                alpha,
                 model: doc.display_matrix(object.id).to_cols_array(),
                 mesh: mesh_cache_for(cache, object),
             }
@@ -127,7 +135,8 @@ pub fn draw_frame(
     DrawFrame {
         view_proj: view_proj.to_cols_array(),
         objects,
-        grid: GRID.clone(),
+        grid,
+        clear,
     }
 }
 

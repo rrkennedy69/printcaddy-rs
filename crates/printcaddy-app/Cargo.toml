@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 printcaddy-core = { path = "../printcaddy-core" }
+serde_json = "1"
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 egui_glow = "0.31"
@@ -33,5 +34,13 @@ web-sys = { version = "0.3", features = [
     "Url",
     "Event",
     "EventTarget",
+    "Storage",
+    "Location",
+    "Request",
+    "RequestInit",
+    "RequestCache",
+    "Response",
+    "Headers",
+    "HtmlHeadElement",
 ] }
 console_error_panic_hook = "0.1"

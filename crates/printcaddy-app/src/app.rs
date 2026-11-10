@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
@@ -7,10 +9,13 @@ use printcaddy_core::{
 };
 
 use crate::camera::Camera;
+use crate::drive;
 use crate::files::{self, Incoming};
+use crate::library::{self, SavedProject};
 use crate::overlay::{self, Gizmo};
 use crate::renderer::ViewportPainter;
 use crate::scene::{self, UploadedMesh};
+use crate::theme::{self, ThemeId};
 
 const DRAG_SLOP: f32 = 5.0;
 
@@ -79,6 +84,20 @@ pub struct PrintCaddyApp {
     /// Face centres of the view cube from the last paint, for the next click.
     cube_faces: Vec<(overlay::CubeFace, Pos2)>,
     notice: String,
+    theme: ThemeId,
+    mobile: bool,
+    show_settings: bool,
+    show_projects: bool,
+    show_updates: bool,
+    project_name: String,
+    projects: Vec<SavedProject>,
+    update_text: String,
+    update_newer: bool,
+    update_slot: Rc<RefCell<Option<String>>>,
+    drive_text: String,
+    drive_note: drive::DriveNote,
+    drive_file: drive::DriveFile,
+    project_in: files::TextIncoming,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
     /// The frame a touch ends, the browser also synthesises a mouse click. Skip that click.
@@ -87,8 +106,9 @@ pub struct PrintCaddyApp {
 
 impl PrintCaddyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Keep the panels light. The viewport clears itself to a dark workshop colour.
-        cc.egui_ctx.set_theme(egui::ThemePreference::Light);
+        let (theme_label, mobile) = library::load_settings();
+        let theme = ThemeId::from_label(&theme_label).unwrap_or(ThemeId::Dark);
+        theme::apply(&cc.egui_ctx, theme, mobile);
         Self {
             doc: Document::new(),
             camera: Camera::default(),
@@ -111,6 +131,20 @@ impl PrintCaddyApp {
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
+            theme,
+            mobile,
+            show_settings: false,
+            show_projects: false,
+            show_updates: false,
+            project_name: "Untitled".into(),
+            projects: library::load(),
+            update_text: "Check whether a newer build is published.".into(),
+            update_newer: false,
+            update_slot: Rc::new(RefCell::new(None)),
+            drive_text: "Sign in with the same Google account flow as the TypeScript app.".into(),
+            drive_note: Rc::new(RefCell::new(None)),
+            drive_file: Rc::new(RefCell::new(None)),
+            project_in: files::text_slot(),
             gesture: Gesture::None,
             touches: HashMap::new(),
             swallow_mouse: false,
@@ -586,7 +620,10 @@ impl PrintCaddyApp {
         }
         let aspect = Self::aspect_of(rect);
         if let Some((min, max)) = self.doc.selection_bounds() {
-            if let Some(gizmo) = overlay::hit_gizmo(&self.camera, aspect, rect, min, max, pos) {
+            let reach = if self.mobile { 30.0 } else { 18.0 };
+            if let Some(gizmo) =
+                overlay::hit_gizmo(&self.camera, aspect, rect, min, max, pos, reach)
+            {
                 self.start_gizmo(rect, pos, gizmo, min, max);
                 return;
             }
@@ -996,6 +1033,9 @@ impl PrintCaddyApp {
 impl eframe::App for PrintCaddyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.take_import();
+        self.take_project();
+        self.take_drive();
+        theme::apply(ctx, self.theme, self.mobile);
         let command = ctx.input(|input| input.modifiers.command);
         let undo_key =
             ctx.input(|input| command && input.key_pressed(egui::Key::Z) && !input.modifiers.shift);
@@ -1038,10 +1078,31 @@ impl eframe::App for PrintCaddyApp {
             .exact_width(280.0)
             .resizable(false)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                let scroll_height = (ui.available_height() - 36.0).max(120.0);
+                egui::ScrollArea::vertical().max_height(scroll_height).show(ui, |ui| {
                     ui.add_space(8.0);
                     ui.heading("PrintCaddy");
-                    ui.label("Rust and WebAssembly");
+                    ui.horizontal(|ui| {
+                        if ui.button("Projects").clicked() {
+                            self.show_projects = true;
+                        }
+                        if ui.button("Settings").clicked() {
+                            self.show_settings = true;
+                        }
+                    });
+                    ui.label(format!("Project {}", self.project_name));
+                    ui.label("Colour");
+                    ui.horizontal_wrapped(|ui| {
+                        for hex in theme::swatches() {
+                            let color = printcaddy_core::Color::from_hex(hex);
+                            let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
+                            ui.painter().rect_filled(rect, 3.0, Color32::from_rgb(color.r, color.g, color.b));
+                            if response.clicked() {
+                                self.paint_selection(color);
+                            }
+                        }
+                    });
+                    ui.small(format!("New bodies stay {}", printcaddy_core::DEFAULT_MODEL_COLOR.hex_string()));
                     ui.horizontal(|ui| {
                         undo = ui.add_enabled(self.history.can_undo(), egui::Button::new("Undo")).clicked();
                         redo = ui.add_enabled(self.history.can_redo(), egui::Button::new("Redo")).clicked();
@@ -1155,6 +1216,10 @@ impl eframe::App for PrintCaddyApp {
                     ui.small("Drag empty space to orbit, drag a shape to move it. Right or middle button pans. Wheel or pinch zooms.");
                     ui.small("Two fingers pan and pinch. A second finger puts a move back. Ctrl+Z undoes.");
                 });
+                if ui.button("Check for updates").clicked() {
+                    self.show_updates = true;
+                    self.start_update_check();
+                }
             });
 
         if let Some(shape) = chosen {
@@ -1218,8 +1283,20 @@ impl eframe::App for PrintCaddyApp {
                     self.handle_mouse(ctx, &response, rect);
                 }
                 let aspect = Self::aspect_of(rect);
-                let frame =
-                    scene::draw_frame(&self.doc, self.camera.view_proj(aspect), &mut self.meshes);
+                let colors = theme::palette(self.theme);
+                let grid = std::sync::Arc::new(scene::GridLines::colored(
+                    colors.grid_minor,
+                    colors.grid_major,
+                    colors.grid_border,
+                ));
+                let frame = scene::draw_frame(
+                    &self.doc,
+                    self.camera.view_proj(aspect),
+                    &mut self.meshes,
+                    grid,
+                    colors.viewport,
+                    colors.xray,
+                );
                 let callback = self.painter.callback(frame);
                 ui.painter().add(egui::PaintCallback { rect, callback });
                 if let Some((min, max)) = self.doc.selection_bounds() {
@@ -1234,7 +1311,238 @@ impl eframe::App for PrintCaddyApp {
             self.doc.bake_rotations();
             self.history.end();
         }
-        files::publish_status(&format!("{} | {}", self.status_text(), self.notice));
+        self.settings_window(ctx);
+        self.projects_window(ctx);
+        self.updates_window(ctx);
+        files::publish_status(&format!(
+            "{} | {} theme={} mobile={}",
+            self.status_text(),
+            self.notice,
+            self.theme.label(),
+            if self.mobile { "yes" } else { "no" }
+        ));
+    }
+}
+
+impl PrintCaddyApp {
+    fn paint_selection(&mut self, color: printcaddy_core::Color) {
+        let ids = self.doc.selected_ids().to_vec();
+        if ids.is_empty() {
+            self.notice = "Select a body to recolour.".into();
+            return;
+        }
+        self.history.end();
+        self.history.begin(&self.doc);
+        for id in ids {
+            self.doc.set_color(id, color);
+        }
+        self.history.end();
+        self.notice = format!("Painted the selection {}", color.hex_string());
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Theme");
+                for theme in ThemeId::ALL {
+                    if ui
+                        .selectable_label(self.theme == theme, theme.label())
+                        .clicked()
+                    {
+                        self.theme = theme;
+                        library::store_settings(theme.label(), self.mobile);
+                    }
+                }
+                if ui.checkbox(&mut self.mobile, "Mobile mode").changed() {
+                    library::store_settings(self.theme.label(), self.mobile);
+                }
+                ui.small("Mobile mode enlarges the handles and the buttons.");
+            });
+        self.show_settings = open;
+    }
+
+    fn projects_window(&mut self, ctx: &egui::Context) {
+        if !self.show_projects {
+            return;
+        }
+        let mut open = true;
+        let mut save = false;
+        let mut export = false;
+        let mut import = false;
+        let mut open_id = None;
+        let mut delete_id = None;
+        let mut rename_id = None;
+        egui::Window::new("Projects")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Name");
+                ui.text_edit_singleline(&mut self.project_name);
+                ui.horizontal(|ui| {
+                    save = ui.button("Save").clicked();
+                    export = ui.button("Export file").clicked();
+                    import = ui.button("Import file").clicked();
+                });
+                ui.separator();
+                ui.label("In this browser");
+                let projects = self.projects.clone();
+                for project in projects {
+                    ui.horizontal(|ui| {
+                        ui.label(project.name.clone());
+                        if ui.button("Open").clicked() {
+                            open_id = Some(project.id);
+                        }
+                        if ui.button("Rename").clicked() {
+                            rename_id = Some(project.id);
+                        }
+                        if ui.button("Delete").clicked() {
+                            delete_id = Some(project.id);
+                        }
+                    });
+                }
+                ui.separator();
+                ui.label(&self.drive_text);
+                ui.horizontal(|ui| {
+                    if ui.button("Save to Drive").clicked() {
+                        drive::save(
+                            self.project_name.clone(),
+                            printcaddy_core::document_to_json(&self.doc),
+                            self.drive_note.clone(),
+                        );
+                        self.drive_text = "Signing in to Google Drive…".into();
+                    }
+                    if ui.button("Open from Drive").clicked() {
+                        drive::open_latest(self.drive_note.clone(), self.drive_file.clone());
+                        self.drive_text = "Signing in to Google Drive…".into();
+                    }
+                });
+                ui.small("Uses the TypeScript site's existing Google client. If Google refuses this site, that client must allow https://rrkennedy69.github.io as a JavaScript origin.");
+            });
+        if save {
+            let id = library::save_current(&mut self.projects, &self.project_name, &self.doc);
+            self.notice = format!("Saved {} ({id})", self.project_name);
+        }
+        if let Some(id) = open_id {
+            match library::open_saved(&self.projects, id) {
+                Ok(doc) => {
+                    let name = self
+                        .projects
+                        .iter()
+                        .find(|project| project.id == id)
+                        .map(|project| project.name.clone())
+                        .unwrap_or_else(|| "Project".into());
+                    self.doc = doc;
+                    self.history = History::default();
+                    self.project_name = name.clone();
+                    self.notice = format!("Opened {name}. Undo starts empty.");
+                }
+                Err(err) => self.notice = err.to_string(),
+            }
+        }
+        if let Some(id) = rename_id {
+            if let Some(project) = self.projects.iter_mut().find(|project| project.id == id) {
+                project.name = self.project_name.clone();
+            }
+            library::store(&self.projects);
+            self.notice = format!("Renamed to {}", self.project_name);
+        }
+        if let Some(id) = delete_id {
+            self.projects.retain(|project| project.id != id);
+            library::store(&self.projects);
+            self.notice = "Deleted the saved project.".into();
+        }
+        if export {
+            let name = format!("{}.printcaddy.json", self.project_name.replace(' ', "-"));
+            files::download_text(&name, &printcaddy_core::document_to_json(&self.doc));
+            self.notice = "Exported the project file.".into();
+        }
+        if import {
+            files::pick_text(self.project_in.clone());
+        }
+        self.show_projects = open;
+    }
+
+    fn updates_window(&mut self, ctx: &egui::Context) {
+        if !self.show_updates {
+            return;
+        }
+        let mut open = true;
+        let mut reload = false;
+        egui::Window::new("Check for updates")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(&self.update_text);
+                if ui.button("Check now").clicked() {
+                    self.start_update_check();
+                }
+                if self.update_newer && ui.button("Reload").clicked() {
+                    reload = true;
+                }
+            });
+        if reload {
+            reload_page();
+        }
+        self.show_updates = open;
+    }
+
+    fn start_update_check(&mut self) {
+        self.update_text = "Checking the published page…".into();
+        self.update_newer = false;
+        let slot = self.update_slot.clone();
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            *slot.borrow_mut() = Some(fetch_update_report().await);
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            *slot.borrow_mut() = Some("CURRENT This check runs in the browser.".into());
+        }
+    }
+
+    fn take_project(&mut self) {
+        let Some((name, text)) = self.project_in.borrow_mut().take() else {
+            return;
+        };
+        match printcaddy_core::document_from_json(&text) {
+            Ok(doc) => {
+                self.doc = doc;
+                self.history = History::default();
+                self.project_name = name
+                    .trim_end_matches(".printcaddy.json")
+                    .trim_end_matches(".json")
+                    .to_string();
+                self.notice = format!("Imported {name}. Undo starts empty.");
+            }
+            Err(err) => self.notice = err.to_string(),
+        }
+    }
+
+    fn take_drive(&mut self) {
+        if let Some(text) = self.drive_note.borrow_mut().take() {
+            self.drive_text = text;
+        }
+        if let Some(body) = self.drive_file.borrow_mut().take() {
+            match printcaddy_core::document_from_json(&body) {
+                Ok(doc) => {
+                    self.doc = doc;
+                    self.history = History::default();
+                    self.notice = "Opened the project from Google Drive. Undo starts empty.".into();
+                }
+                Err(err) => self.drive_text = err.to_string(),
+            }
+        }
+        if let Some(report) = self.update_slot.borrow_mut().take() {
+            self.update_newer = report.starts_with("NEWER");
+            self.update_text = report
+                .trim_start_matches("NEWER ")
+                .trim_start_matches("CURRENT ")
+                .to_string();
+            self.notice = self.update_text.clone();
+        }
     }
 }
 
@@ -1253,6 +1561,71 @@ fn midpoint(a: Pos2, b: Pos2) -> Pos2 {
 
 fn touch_key(id: egui::TouchId) -> u64 {
     id.0
+}
+
+fn reload_page() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(path) = window.location().pathname() {
+                let fresh = js_sys::Date::now();
+                let _ = window.location().set_href(&format!("{path}?fresh={fresh}"));
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_update_report() -> String {
+    use printcaddy_core::compare_builds;
+    use printcaddy_core::UpdateReport;
+    use wasm_bindgen::JsCast;
+    let Some(window) = web_sys::window() else {
+        return "CURRENT The browser window is missing.".into();
+    };
+    let current = window
+        .document()
+        .and_then(|document| document.document_element())
+        .map(|element| element.inner_html())
+        .unwrap_or_default();
+    let url = format!(
+        "https://rrkennedy69.github.io/printcaddy-rs/index.html?fresh={}",
+        js_sys::Date::now()
+    );
+    let init = web_sys::RequestInit::new();
+    init.set_cache(web_sys::RequestCache::NoStore);
+    let request = match web_sys::Request::new_with_str_and_init(&url, &init) {
+        Ok(request) => request,
+        Err(_) => return "CURRENT Could not ask the published page.".into(),
+    };
+    let response =
+        match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await {
+            Ok(response) => response,
+            Err(_) => return "CURRENT Could not reach the published page.".into(),
+        };
+    let Ok(response) = response.dyn_into::<web_sys::Response>() else {
+        return "CURRENT Could not read the published page.".into();
+    };
+    if !response.ok() {
+        return format!(
+            "CURRENT The published page returned HTTP {}.",
+            response.status()
+        );
+    }
+    let Ok(text_promise) = response.text() else {
+        return "CURRENT Could not read the published page.".into();
+    };
+    let Ok(text) = wasm_bindgen_futures::JsFuture::from(text_promise).await else {
+        return "CURRENT Could not read the published page.".into();
+    };
+    let remote = text.as_string().unwrap_or_default();
+    match compare_builds(&current, &remote) {
+        UpdateReport::Current => "CURRENT This is the current build.".into(),
+        UpdateReport::Newer { remote, .. } => {
+            format!("NEWER A newer build is published ({remote}).")
+        }
+        UpdateReport::Unknown => "CURRENT The published page did not name a build.".into(),
+    }
 }
 
 fn ray_onto_plane(ray: Ray, origin: glam::Vec3, normal: glam::Vec3) -> Option<glam::Vec3> {

@@ -264,6 +264,7 @@ pub fn hit_gizmo(
     min: Vec3,
     max: Vec3,
     pointer: Pos2,
+    hit_radius: f32,
 ) -> Option<Gizmo> {
     let mut best: Option<(f32, Gizmo)> = None;
     for mark in gizmo_marks(min, max) {
@@ -271,7 +272,7 @@ pub fn hit_gizmo(
             continue;
         };
         let distance = at.distance(pointer);
-        if distance < 18.0 && best.map(|(so_far, _)| distance < so_far).unwrap_or(true) {
+        if distance < hit_radius && best.map(|(so_far, _)| distance < so_far).unwrap_or(true) {
             best = Some((distance, mark.kind));
         }
     }

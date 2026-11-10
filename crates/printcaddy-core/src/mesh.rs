@@ -2,7 +2,7 @@ use glam::Vec3;
 
 /// Indexed triangle mesh in millimetres. Local meshes sit with their bottom on Y = 0
 /// and their footprint centered on X and Z.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Mesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,

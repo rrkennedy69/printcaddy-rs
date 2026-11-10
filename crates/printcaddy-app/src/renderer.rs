@@ -159,7 +159,12 @@ fn paint(
         gl.enable(glow::DEPTH_TEST);
         gl.depth_func(glow::LEQUAL);
         gl.clear_depth_f32(1.0);
-        gl.clear_color(0.11, 0.145, 0.17, 1.0);
+        gl.clear_color(
+            frame.clear[0],
+            frame.clear[1],
+            frame.clear[2],
+            frame.clear[3],
+        );
         gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         gl.enable(glow::CULL_FACE);
         gl.cull_face(glow::BACK);

@@ -219,6 +219,7 @@ These are the behaviours to match, not just the presence of a widget.
 - [ ] Drawing export to PDF or SVG: front, top, and right, first-angle, bordered sheet, title block, overall dimensions, hidden edges, hole tables
 - [ ] Bambu 3MF export (plates, colours, filaments, slice settings)
 - [ ] Send to Bambu Studio: build that 3MF and open the share sheet on iPad or download it on a computer
+- [x] Projects in this browser: save, open, rename, delete, and export or import a project file. The file keeps bodies, sketches, groups, holes, and colours. Undo history is not in the file.
 - [ ] Project file `.lyl` (history, sketches, groups), with Ctrl+S back to the chosen file in Chrome and Edge
 - [ ] Older `.skf` files still open
 - [ ] Design folders on the start page, search, multi-delete
@@ -254,26 +255,26 @@ These are the behaviours to match, not just the presence of a widget.
 
 ## Themes, settings, mobile, updates
 
-- [ ] Themes: System, Light, Dark, Graphite, Night Vision, Thermal, X-Ray, Blocks (Tinkercad-inspired), Forge (Fusion-inspired), Works (SolidWorks-inspired)
-- [ ] X-Ray palette on the chrome and on the plate widgets
-- [ ] Settings sections: Appearance, Measurement, Workplane, Shape defaults, History, Mobile & touch, Loaded filaments, AI, Keyboard shortcuts
-- [ ] Mobile & touch: auto-open the properties panel, larger touch handles, long-press delay (300–1200 ms, default 550)
+- [x] Themes: Light, Dark, Graphite, Night Vision, Thermal, X-Ray, Blocks, Forge, Works. System theme follows the browser later.
+- [x] X-Ray palette on the panels, the plate, and see-through bodies
+- [ ] Settings sections: Appearance, Measurement, Workplane, Shape defaults, History, Mobile & touch, Loaded filaments, Keyboard shortcuts — theme and Mobile mode are in; the other sections are not
+- [x] Mobile mode enlarges the handles and the buttons. Long-press delay and auto-open properties stay later.
 - [ ] Simple mode
 - [ ] Pencil / stylus mode
 - [ ] Units: millimetres, or inches as fractions or decimals, with the grid drawn in inches
 - [ ] Keyboard shortcut editor
 - [ ] View-cube corner, light, fast mode, snap, and the other appearance and workplane switches
 - [ ] Language menu: English, Czech, Danish, German, Spanish, French, Italian, Hungarian, Dutch, Polish, Portuguese (Portugal and Brazil), Slovenian, Turkish, Russian, Arabic, Japanese, Chinese (simplified and traditional), plus the in-app guide in those languages
-- [ ] Check for updates button (Settings → Mobile & touch, in the installed iPad app: version line, check, native app link)
+- [x] Check for updates in the bottom-left corner. It compares this page with the published build and can reload. The installed iPad app's update row is not this button.
 - [ ] Update notice on the published site, offering save and reload and listing what is new
 - [ ] Install as an app / service worker / offline
 - [ ] Tablet behaviour from the guide: one finger works like the left button, two fingers belong to the view, a second finger cancels the first finger's edit, an on-screen orbit switch, number fields select their value, a larger finger reach than the mouse, stylus preferred
 - [ ] Touch multi-select
 - [ ] Welcome, what's new, and the user guide
 
-## Accounts and helpers
+## Accounts
 
-- [ ] Google Drive sync (sign-in, merge, settings slot)
+- [ ] Google Drive save and open is in the Projects window and uses the TypeScript site's existing client. Sign-in stays blocked until that client allows https://rrkennedy69.github.io as a JavaScript origin. Merge and a settings slot are not in.
 - [ ] Shared designs on a server folder
 - [ ] Start page, design tabs, and home
 

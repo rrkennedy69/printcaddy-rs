@@ -12,7 +12,7 @@ use crate::mesh::{box_mesh, Mesh};
 pub const CYLINDER_SEGMENTS: u32 = 32;
 
 /// A drop-in solid. Sizes are the library defaults, in millimetres: width, depth, height.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     Box,
     RoundedBox,

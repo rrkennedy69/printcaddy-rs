@@ -49,6 +49,6 @@ Checked work is in the app today. Everything else is still only in the TypeScrip
 6. **Exchange.** 3MF, OBJ, SVG, DXF, and STEP, including colours and multi-body files.
 7. **Bambu.** Extra plates in rows of three, the filament catalogue and loaded-filament import, Bambu 3MF export, Send to Bambu Studio.
 8. **Slice.** The slicer page (prepare and preview), materials, and the layer-view cutaway.
-9. **Chrome.** Themes including X-Ray, settings including the Mobile section, Check for updates, projects (`.lyl`), Google Drive, the AI helper, and the languages.
+9. **Chrome.** Themes including X-Ray, Settings with Mobile mode, Check for updates, and browser projects. Done for those. Google Drive uses the existing client and waits on that client's allowed origin. Languages stay later. The AI helper is not part of this rewrite.
 
 Each round should keep the wasm build on GitHub Pages and the core tests green. The TypeScript site is not modified and stays the production app until the boxes in `docs/FEATURES.md` are checked.

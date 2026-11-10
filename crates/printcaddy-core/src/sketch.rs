@@ -7,14 +7,14 @@ use glam::Vec3;
 
 use crate::mesh::Mesh;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SketchOp {
     Extrude,
     Revolve,
     Sweep,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SketchDef {
     pub profile: Vec<[f32; 2]>,
     pub path: Vec<[f32; 2]>,
