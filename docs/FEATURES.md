@@ -205,15 +205,12 @@ These are the behaviours to match, not just the presence of a widget.
 
 - [ ] STL import
 - [ ] STL export
-- [ ] OBJ import, including a coloured OBJ and a Tinkercad ZIP with its `.mtl`, one body per colour
-- [ ] OBJ export with colours
-- [ ] 3MF import, including slicer projects, one body per colour and per object
-- [ ] 3MF export with names and colours, selection or whole scene, hidden parts left out
-- [ ] STEP import, one body per solid, keeping name and colour
-- [ ] STEP export
-- [ ] SVG import as a sketch body (area, stroke outside or inside, silhouette, widened), and cookie-cutter from one file
+- [x] OBJ import and export, Z-up millimetres, vertex colours. A Tinkercad ZIP and `.mtl` are not read
+- [x] 3MF import and export, one object per body with its name and colour. Bambu project 3MF is not this file
+- [x] STEP import and export of triangulated `POLY_LOOP` faces, millimetres, Z-up, no colour. Exact B-rep is refused
+- [x] SVG import as a sketch outline (rectangles, polygons, polylines, and paths; curves are flattened). Stroke styles and cookie-cutters are not in
 - [ ] SVG export of the top view, with optional stencil bridges
-- [ ] DXF import of a part outline, holes as holes, arcs and circles kept true
+- [x] DXF import of LINE, LWPOLYLINE, and CIRCLE as a sketch, inches scaled to millimetres. True arcs and holes-as-holes stay later
 - [ ] DXF export with true arcs and circles
 - [ ] PNG of the view, optional 2× and transparent background
 - [ ] Drawing export to PDF or SVG: front, top, and right, first-angle, bordered sheet, title block, overall dimensions, hidden edges, hole tables

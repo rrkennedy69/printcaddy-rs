@@ -1865,6 +1865,7 @@ dependencies = [
 name = "printcaddy-core"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "glam",
  "serde",
  "serde_json",

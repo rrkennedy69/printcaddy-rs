@@ -9,8 +9,12 @@ pub fn incoming_slot() -> Incoming {
     Rc::new(RefCell::new(None))
 }
 
-#[cfg(target_arch = "wasm32")]
 pub fn pick_stl(slot: Incoming) {
+    pick_file(slot, ".stl,model/stl");
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn pick_file(slot: Incoming, accept: &str) {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
 
@@ -22,7 +26,7 @@ pub fn pick_stl(slot: Incoming) {
         .dyn_into::<web_sys::HtmlInputElement>()
         .unwrap();
     input.set_type("file");
-    let _ = input.set_accept(".stl,model/stl");
+    let _ = input.set_accept(accept);
     let input_cb = input.clone();
     let change = Closure::once(move |_event: web_sys::Event| {
         let Some(files) = input_cb.files() else {
@@ -49,17 +53,21 @@ pub fn pick_stl(slot: Incoming) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn pick_stl(_slot: Incoming) {}
+pub fn pick_file(_slot: Incoming, _accept: &str) {}
+
+pub fn download_stl(bytes: &[u8]) {
+    download_named("printcaddy.stl", "model/stl", bytes);
+}
 
 #[cfg(target_arch = "wasm32")]
-pub fn download_stl(bytes: &[u8]) {
+pub fn download_named(name: &str, mime: &str, bytes: &[u8]) {
     use wasm_bindgen::JsCast;
 
     let array = js_sys::Uint8Array::from(bytes);
     let parts = js_sys::Array::new();
     parts.push(&array);
     let options = web_sys::BlobPropertyBag::new();
-    options.set_type("model/stl");
+    options.set_type(mime);
     let blob =
         web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).expect("blob");
     let url = web_sys::Url::create_object_url_with_blob(&blob).expect("url");
@@ -70,16 +78,15 @@ pub fn download_stl(bytes: &[u8]) {
         .dyn_into::<web_sys::HtmlAnchorElement>()
         .unwrap();
     anchor.set_href(&url);
-    anchor.set_download("printcaddy.stl");
+    anchor.set_download(name);
     anchor.click();
     let _ = web_sys::Url::revoke_object_url(&url);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn download_stl(bytes: &[u8]) {
-    let path = std::env::temp_dir().join("printcaddy.stl");
+pub fn download_named(name: &str, _mime: &str, bytes: &[u8]) {
+    let path = std::env::temp_dir().join(name);
     let _ = std::fs::write(&path, bytes);
-    eprintln!("wrote {}", path.display());
 }
 
 #[cfg(target_arch = "wasm32")]

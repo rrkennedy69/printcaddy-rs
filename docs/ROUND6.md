@@ -12,7 +12,7 @@ Exchange files are millimetres, Z-up, the same way the TypeScript app writes STL
 - **OBJ.** Import and export. A comment says `Z-up, millimetres`. Colour is `v x y z r g b` on each vertex, one file, no material library.
 - **SVG.** Import only, as a sketch outline the existing extrude, revolve, and sweep tools already edit. Rectangles, polygons, polylines, and paths of M, L, H, V, and Z are read as millimetres. Curves are flattened to lines. Text and images are ignored. One user unit is one millimetre.
 - **DXF.** Import only, as the same kind of sketch. LINE, LWPOLYLINE, and CIRCLE in model space. `$INSUNITS` of inches is scaled to millimetres; a missing unit is millimetres. A circle becomes a 24-sided outline. Text, hatches, and dimensions are skipped.
-- **STEP.** Import and export of one subset: triangulated faces, `POLY_LOOP` of `CARTESIAN_POINT`, millimetres, Z-up. That is what this build writes for every mesh. Exact B-rep (NURBS, `ADVANCED_BREP`, threads, gears) is rejected with a sentence. STEP does not carry colour here; an import uses `#8A98A6`.
+- **STEP.** Import and export of one subset: triangulated faces, `POLY_LOOP` of `CARTESIAN_POINT`, Z-up. The file names millimetres with `SI_UNIT(.MILLI.,.METRE.)`. That is what this build writes for every mesh. There is no shell or solid entity around the loops. Exact B-rep (NURBS, `ADVANCED_BREP`, threads, gears) is rejected with a sentence. STEP does not carry colour here; an import uses `#8A98A6`.
 
 The TypeScript app writes analytic STEP for boxes, cylinders, spheres, and cones through OpenCascade, and it refuses meshes. This build does the opposite subset: every mesh goes out as triangles, and analytic solids from other CAD do not come in.
 

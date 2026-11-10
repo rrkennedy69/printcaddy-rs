@@ -405,6 +405,24 @@ impl Document {
         self.spawn(name.into(), ObjectKind::Mesh { mesh })
     }
 
+    /// Place a world-space mesh where it already sits, and paint it.
+    pub fn add_placed_mesh(
+        &mut self,
+        name: impl Into<String>,
+        color: crate::color::Color,
+        mut mesh: Mesh,
+    ) -> ObjectId {
+        let (min, max) = mesh.bounds();
+        let at = Vec3::new((min.x + max.x) * 0.5, min.y, (min.z + max.z) * 0.5);
+        seat_on_plate(&mut mesh);
+        let id = self.spawn(name.into(), ObjectKind::Mesh { mesh });
+        if let Some(object) = self.object_mut(id) {
+            object.position = at;
+            object.color = color;
+        }
+        id
+    }
+
     pub fn move_object_to(&mut self, id: ObjectId, x: f32, z: f32) {
         if let Some(object) = self.object_mut(id) {
             object.position.x = x;

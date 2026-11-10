@@ -4,8 +4,10 @@ use std::rc::Rc;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    document_to_stl, import_stl, ray_plane_y, snap_mm, BooleanOp, Document, History, ObjectId, Ray,
-    Shape, SketchDef, SketchOp, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
+    document_from_obj, document_from_step, document_to_obj, document_to_step, document_to_stl,
+    export_3mf, import_3mf, import_dxf, import_stl, import_svg, ray_plane_y, snap_mm, BooleanOp,
+    Document, History, ObjectId, Ray, Shape, SketchDef, SketchOp, DEFAULT_MODEL_COLOR,
+    DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -98,6 +100,8 @@ pub struct PrintCaddyApp {
     drive_note: drive::DriveNote,
     drive_file: drive::DriveFile,
     project_in: files::TextIncoming,
+    show_import: bool,
+    show_export: bool,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
     /// The frame a touch ends, the browser also synthesises a mouse click. Skip that click.
@@ -145,6 +149,8 @@ impl PrintCaddyApp {
             drive_note: Rc::new(RefCell::new(None)),
             drive_file: Rc::new(RefCell::new(None)),
             project_in: files::text_slot(),
+            show_import: false,
+            show_export: false,
             gesture: Gesture::None,
             touches: HashMap::new(),
             swallow_mouse: false,
@@ -358,17 +364,38 @@ impl PrintCaddyApp {
         };
         self.history.end();
         self.history.begin(&self.doc);
-        match import_stl(&mut self.doc, &name, &bytes) {
-            Ok(id) => {
-                let label = self.doc.object(id).map(|o| o.name.clone()).unwrap_or(name);
-                self.notice = format!("Imported {label}");
+        let before = self.doc.objects().len();
+        let result = self.import_bytes(&name, &bytes);
+        match result {
+            Ok(()) => {
+                self.history.end();
+                let added = self.doc.objects().len().saturating_sub(before);
+                self.notice = format!("Imported {name} ({added})");
             }
-            Err(_) => {
+            Err(err) => {
                 self.history.cancel();
-                self.notice = format!("Could not read {name} as STL");
+                self.notice = err;
             }
         }
-        self.history.end();
+    }
+
+    fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".3mf") {
+            import_3mf(&mut self.doc, bytes).map_err(|err| err.to_string())
+        } else if lower.ends_with(".obj") {
+            document_from_obj(&mut self.doc, bytes).map_err(|err| err.to_string())
+        } else if lower.ends_with(".svg") {
+            import_svg(&mut self.doc, bytes).map_err(|err| err.to_string())
+        } else if lower.ends_with(".dxf") {
+            import_dxf(&mut self.doc, bytes).map_err(|err| err.to_string())
+        } else if lower.ends_with(".step") || lower.ends_with(".stp") {
+            document_from_step(&mut self.doc, bytes).map_err(|err| err.to_string())
+        } else {
+            import_stl(&mut self.doc, name, bytes)
+                .map(|_| ())
+                .map_err(|_| format!("Could not read {name} as STL"))
+        }
     }
 
     fn combine(&mut self, op: BooleanOp) {
@@ -1122,6 +1149,14 @@ impl eframe::App for PrintCaddyApp {
                         export = ui.button("Export STL").clicked();
                     });
                     ui.horizontal(|ui| {
+                        if ui.button("Import file").clicked() {
+                            self.show_import = true;
+                        }
+                        if ui.button("Export file").clicked() {
+                            self.show_export = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
                         duplicate = ui.button("Duplicate").clicked();
                         delete = ui.button("Delete").clicked();
                     });
@@ -1314,6 +1349,7 @@ impl eframe::App for PrintCaddyApp {
         self.settings_window(ctx);
         self.projects_window(ctx);
         self.updates_window(ctx);
+        self.exchange_windows(ctx);
         files::publish_status(&format!(
             "{} | {} theme={} mobile={}",
             self.status_text(),
@@ -1325,6 +1361,90 @@ impl eframe::App for PrintCaddyApp {
 }
 
 impl PrintCaddyApp {
+    fn exchange_windows(&mut self, ctx: &egui::Context) {
+        if self.show_import {
+            let mut open = true;
+            let mut pick: Option<(&str, &str)> = None;
+            egui::Window::new("Import")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label("Millimetres. 3MF, OBJ, and STEP are Z-up. SVG and DXF become a sketch you can extrude, revolve, or sweep.");
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, accept) in [
+                            ("STL", ".stl"),
+                            ("3MF", ".3mf"),
+                            ("OBJ", ".obj"),
+                            ("SVG", ".svg"),
+                            ("DXF", ".dxf"),
+                            ("STEP", ".step,.stp"),
+                        ] {
+                            if ui.button(label).clicked() {
+                                pick = Some((label, accept));
+                            }
+                        }
+                    });
+                    ui.small("A file over 32 MB is refused. SVG and DXF stop at 2 MB. Exact CAD STEP is refused; triangulated faces are read.");
+                });
+            if let Some((_, accept)) = pick {
+                files::pick_file(self.incoming.clone(), accept);
+                self.show_import = false;
+            } else {
+                self.show_import = open;
+            }
+        }
+        if self.show_export {
+            let mut open = true;
+            let mut chosen = None;
+            egui::Window::new("Export")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label("Millimetres, Z-up, matching the TypeScript app. STL stays in the document's axes.");
+                    if ui.button("3MF with colour").clicked() {
+                        chosen = Some("3mf");
+                    }
+                    if ui.button("OBJ with colour").clicked() {
+                        chosen = Some("obj");
+                    }
+                    if ui.button("STEP triangles").clicked() {
+                        chosen = Some("step");
+                    }
+                    ui.small("STEP here is triangulated POLY_LOOP faces, not analytic B-rep.");
+                });
+            if let Some(kind) = chosen {
+                self.export_exchange(kind);
+                self.show_export = false;
+            } else {
+                self.show_export = open;
+            }
+        }
+    }
+
+    fn export_exchange(&mut self, kind: &str) {
+        let selected = self.doc.selection().is_some();
+        match kind {
+            "3mf" => match export_3mf(&self.doc, selected) {
+                Ok(bytes) => {
+                    files::download_named("printcaddy.3mf", "model/3mf", &bytes);
+                    self.notice = "Exported 3MF.".into();
+                }
+                Err(err) => self.notice = err.to_string(),
+            },
+            "obj" => {
+                let text = document_to_obj(&self.doc, selected);
+                files::download_text("printcaddy.obj", &text);
+                self.notice = "Exported OBJ.".into();
+            }
+            "step" => match document_to_step(&self.doc, selected) {
+                Ok(text) => {
+                    files::download_text("printcaddy.step", &text);
+                    self.notice = "Exported triangulated STEP.".into();
+                }
+                Err(err) => self.notice = err.to_string(),
+            },
+            _ => {}
+        }
+    }
+
     fn paint_selection(&mut self, color: printcaddy_core::Color) {
         let ids = self.doc.selected_ids().to_vec();
         if ids.is_empty() {

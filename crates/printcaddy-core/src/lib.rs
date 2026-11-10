@@ -3,6 +3,7 @@
 mod boolean;
 mod color;
 mod document;
+mod exchange;
 mod history;
 mod mesh;
 mod project;
@@ -17,6 +18,10 @@ pub use color::{Color, DEFAULT_MODEL_COLOR};
 pub use document::{
     Document, GroupError, Object, ObjectId, ObjectKind, CYLINDER_HEIGHT, CYLINDER_RADIUS,
     CYLINDER_SEGMENTS, DEFAULT_BOX, DEFAULT_SNAP_MM,
+};
+pub use exchange::{
+    document_from_obj, document_from_step, document_to_obj, document_to_step, export_3mf,
+    import_3mf, import_dxf, import_svg, ExchangeError,
 };
 pub use history::History;
 pub use mesh::Mesh;
