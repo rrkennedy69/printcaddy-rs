@@ -206,7 +206,7 @@ These are the behaviours to match, not just the presence of a widget.
 - [ ] STL import
 - [ ] STL export
 - [x] OBJ import and export, Z-up millimetres, vertex colours. A Tinkercad ZIP and `.mtl` are not read
-- [x] 3MF import and export, one object per body with its name and colour. Bambu project 3MF is not this file
+- [x] 3MF import and export, one object per body with its name and colour. A Bambu project 3MF is a separate export
 - [x] STEP import and export of triangulated `POLY_LOOP` faces, millimetres, Z-up, no colour. Exact B-rep is refused
 - [x] SVG import as a sketch outline (rectangles, polygons, polylines, and paths; curves are flattened). Stroke styles and cookie-cutters are not in
 - [ ] SVG export of the top view, with optional stencil bridges
@@ -214,7 +214,7 @@ These are the behaviours to match, not just the presence of a widget.
 - [ ] DXF export with true arcs and circles
 - [ ] PNG of the view, optional 2× and transparent background
 - [ ] Drawing export to PDF or SVG: front, top, and right, first-angle, bordered sheet, title block, overall dimensions, hidden edges, hole tables
-- [ ] Bambu 3MF export (plates, colours, filaments, slice settings)
+- [x] Bambu 3MF export with a filament slot per body colour. It names the X1 Carbon system presets and does not embed the full machine profile. Send to Bambu Studio is not included
 - [ ] Send to Bambu Studio: build that 3MF and open the share sheet on iPad or download it on a computer
 - [x] Projects in this browser: save, open, rename, delete, and export or import a project file. The file keeps bodies, sketches, groups, holes, and colours. Undo history is not in the file.
 - [ ] Project file `.lyl` (history, sketches, groups), with Ctrl+S back to the chosen file in Chrome and Edge
@@ -233,13 +233,13 @@ These are the behaviours to match, not just the presence of a widget.
 - [ ] Printer presets (the current list is more than 220) and a plate of that size
 - [ ] Printer name and build volume in the corner, with a switch to hide them and the design name
 - [ ] Warning when a body crosses the plate edge
-- [ ] Extra build plates, laid out 3 per row (`PLATES_PER_ROW = 3`), 64 mm gap, plate 4 under plate 1 toward the viewer
+- [x] Extra build plates, laid out 3 per row, 64 mm gap, plate 4 under plate 1 toward the viewer (+Z)
 - [ ] Legacy one-row 20 mm layout migrated onto the grid once per design
-- [ ] Per-plate delete (objects move to the floor beside the plates, later plates slide over) and lock
-- [ ] Objects dropped onto a locked plate become locked
-- [ ] Bambu filament catalogue and colours, used by the colour picker, the slicer slots, and 3MF export
-- [ ] Default filament PLA Basic (`GFA00`) where a Bambu material is required
-- [ ] Loaded filaments: import the filaments actually loaded on the printer (colour, type, preset name, id) from a Bambu settings file, edited under Settings → Loaded filaments
+- [x] Per-plate delete (objects move to the floor beside the plates, later plates slide over) and lock
+- [x] Objects dropped onto a locked plate become locked
+- [x] Bambu filament catalogue and colours, used by the colour picker and Bambu 3MF export. The slicer slots are round 8
+- [x] Default filament PLA Basic (`GFA00`) where a Bambu material is required. A new body is still `#8A98A6` until it is painted
+- [x] Loaded filaments: import colour, type, preset name, and id from a Bambu settings file, under Settings. Shown as Currently Loaded at the top of the colour picker. Slicer process settings are not applied
 - [ ] Materials with nozzle, bed, density, and fan: PLA, PETG, PET, ABS, ASA, TPU, PC, PA, PVA
 - [ ] Slicer page in the Bambu Studio prepare / preview layout
 - [ ] Presets 0.28 mm extra draft, 0.20 mm standard, 0.12 mm fine

@@ -1,6 +1,8 @@
 //! Designs kept in this browser. The undo stack is not stored with them.
 
-use printcaddy_core::{document_from_json, document_to_json, Document, ProjectError};
+use printcaddy_core::{
+    document_from_json, document_to_json, Document, LoadedFilament, ProjectError,
+};
 
 #[derive(Clone, Debug)]
 pub struct SavedProject {
@@ -10,6 +12,19 @@ pub struct SavedProject {
 }
 
 const KEY: &str = "printcaddy.projects.v1";
+const LOADED: &str = "printcaddy.loaded.v1";
+
+pub fn load_filaments() -> Vec<LoadedFilament> {
+    read_key(LOADED)
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn store_filaments(filaments: &[LoadedFilament]) {
+    if let Ok(text) = serde_json::to_string(filaments) {
+        write_key(LOADED, &text);
+    }
+}
 const SETTINGS: &str = "printcaddy.settings.v1";
 
 pub fn load() -> Vec<SavedProject> {

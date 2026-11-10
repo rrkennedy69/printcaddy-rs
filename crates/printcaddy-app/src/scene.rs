@@ -35,37 +35,74 @@ pub struct GridLines {
 }
 
 impl GridLines {
-    pub fn colored(minor: [f32; 3], major: [f32; 3], border: [f32; 3]) -> Self {
+    /// One grid per plate centre. The axis triad stays on the plate at the origin.
+    pub fn plates(
+        minor: [f32; 3],
+        major: [f32; 3],
+        border: [f32; 3],
+        centers: &[(f32, f32)],
+    ) -> Self {
         let half = PLATE_SIZE_MM * 0.5;
         let mut vertices = Vec::new();
-        let mut line = |a: [f32; 3], b: [f32; 3], color: [f32; 3]| {
-            vertices.extend_from_slice(&[a[0], a[1], a[2], color[0], color[1], color[2]]);
-            vertices.extend_from_slice(&[b[0], b[1], b[2], color[0], color[1], color[2]]);
+        let centers = if centers.is_empty() {
+            vec![(0.0, 0.0)]
+        } else {
+            centers.to_vec()
         };
-        let major_every = (GRID_MAJOR_MM / GRID_MINOR_MM).round() as i32;
-        // Grid lines sit on multiples of the minor step. The plate edge is its own rectangle,
-        // because 256 mm is not a multiple of 10 mm.
-        let mut cursor = (-half / GRID_MINOR_MM).ceil() * GRID_MINOR_MM;
-        while cursor < half - 0.01 {
-            let steps = (cursor / GRID_MINOR_MM).round() as i32;
-            let color = if steps % major_every == 0 {
-                major
-            } else {
-                minor
+        for (ox, oz) in centers {
+            let mut line = |a: [f32; 3], b: [f32; 3], color: [f32; 3]| {
+                vertices.extend_from_slice(&[a[0], a[1], a[2], color[0], color[1], color[2]]);
+                vertices.extend_from_slice(&[b[0], b[1], b[2], color[0], color[1], color[2]]);
             };
-            line([-half, 0.0, cursor], [half, 0.0, cursor], color);
-            line([cursor, 0.0, -half], [cursor, 0.0, half], color);
-            cursor += GRID_MINOR_MM;
+            let major_every = (GRID_MAJOR_MM / GRID_MINOR_MM).round() as i32;
+            let mut cursor = (-half / GRID_MINOR_MM).ceil() * GRID_MINOR_MM;
+            while cursor < half - 0.01 {
+                let steps = (cursor / GRID_MINOR_MM).round() as i32;
+                let color = if steps % major_every == 0 {
+                    major
+                } else {
+                    minor
+                };
+                line(
+                    [ox - half, 0.0, oz + cursor],
+                    [ox + half, 0.0, oz + cursor],
+                    color,
+                );
+                line(
+                    [ox + cursor, 0.0, oz - half],
+                    [ox + cursor, 0.0, oz + half],
+                    color,
+                );
+                cursor += GRID_MINOR_MM;
+            }
+            line(
+                [ox - half, 0.0, oz - half],
+                [ox + half, 0.0, oz - half],
+                border,
+            );
+            line(
+                [ox + half, 0.0, oz - half],
+                [ox + half, 0.0, oz + half],
+                border,
+            );
+            line(
+                [ox + half, 0.0, oz + half],
+                [ox - half, 0.0, oz + half],
+                border,
+            );
+            line(
+                [ox - half, 0.0, oz + half],
+                [ox - half, 0.0, oz - half],
+                border,
+            );
+            if ox.abs() < 0.1 && oz.abs() < 0.1 {
+                let len = 36.0;
+                let y = 0.2;
+                line([0.0, y, 0.0], [len, y, 0.0], [0.86, 0.28, 0.28]);
+                line([0.0, y, 0.0], [0.0, y + len, 0.0], [0.30, 0.72, 0.38]);
+                line([0.0, y, 0.0], [0.0, y, len], [0.28, 0.52, 0.90]);
+            }
         }
-        line([-half, 0.0, -half], [half, 0.0, -half], border);
-        line([half, 0.0, -half], [half, 0.0, half], border);
-        line([half, 0.0, half], [-half, 0.0, half], border);
-        line([-half, 0.0, half], [-half, 0.0, -half], border);
-        let len = 36.0;
-        let y = 0.2;
-        line([0.0, y, 0.0], [len, y, 0.0], [0.86, 0.28, 0.28]);
-        line([0.0, y, 0.0], [0.0, y + len, 0.0], [0.30, 0.72, 0.38]);
-        line([0.0, y, 0.0], [0.0, y, len], [0.28, 0.52, 0.90]);
         Self { vertices }
     }
 }

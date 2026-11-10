@@ -92,6 +92,12 @@ pub struct Object {
     pub hole: bool,
     /// Set when this body belongs to a group. A click selects the group instead.
     pub parent: Option<ObjectId>,
+    /// A locked body cannot be selected. A locked plate sets this on the bodies sitting on it.
+    #[serde(default)]
+    pub locked: bool,
+    /// Bambu material and colour name, when the body was painted from the filament list.
+    #[serde(default)]
+    pub filament: Option<crate::bambu::FilamentRef>,
 }
 
 impl Object {
@@ -222,6 +228,9 @@ pub struct Document {
     box_count: u32,
     cylinder_count: u32,
     selection: Vec<ObjectId>,
+    /// Extra plate slots. Plate 1 is always slot 0 and is not stored here.
+    pub(crate) extra_slots: Vec<u32>,
+    pub(crate) locked_slots: Vec<u32>,
 }
 
 impl Default for Document {
@@ -238,11 +247,17 @@ impl Document {
             box_count: 0,
             cylinder_count: 0,
             selection: Vec::new(),
+            extra_slots: Vec::new(),
+            locked_slots: Vec::new(),
         }
     }
 
     pub fn objects(&self) -> &[Object] {
         &self.objects
+    }
+
+    pub(crate) fn objects_mut(&mut self) -> &mut [Object] {
+        &mut self.objects
     }
 
     pub(crate) fn next_id_value(&self) -> u64 {
@@ -263,6 +278,25 @@ impl Document {
         doc.next_id = next_id.max(highest.saturating_add(1)).max(1);
         doc.objects = objects;
         doc
+    }
+
+    pub(crate) fn extra_slots(&self) -> &[u32] {
+        &self.extra_slots
+    }
+
+    pub(crate) fn locked_slots(&self) -> &[u32] {
+        &self.locked_slots
+    }
+
+    pub(crate) fn restore_plates(&mut self, extra: Vec<u32>, locked: Vec<u32>) {
+        self.extra_slots = extra;
+        self.locked_slots = locked;
+    }
+
+    pub fn set_filament(&mut self, id: ObjectId, filament: crate::bambu::FilamentRef) {
+        if let Some(object) = self.object_mut(id) {
+            object.filament = Some(filament);
+        }
     }
 
     pub fn set_color(&mut self, id: ObjectId, color: crate::color::Color) {
@@ -644,7 +678,7 @@ impl Document {
     pub fn hit_test(&self, ray: Ray) -> Option<ObjectId> {
         let mut best: Option<(f32, ObjectId)> = None;
         for object in &self.objects {
-            if object.parent.is_some() {
+            if object.locked || object.parent.is_some() {
                 continue;
             }
             let hit = if let ObjectKind::Group { cut: None, .. } = &object.kind {
@@ -1083,6 +1117,8 @@ impl Document {
             object.rotation = source.rotation;
             object.color = source.color;
             object.hole = source.hole;
+            object.filament = source.filament.clone();
+            object.locked = source.locked;
         }
         if let ObjectKind::Group { members, .. } = source.kind {
             let mut copied = Vec::new();
@@ -1116,6 +1152,8 @@ impl Document {
             revision: 1,
             hole: false,
             parent: None,
+            locked: false,
+            filament: None,
         });
         id
     }
@@ -1205,6 +1243,8 @@ impl Document {
             revision: 1,
             hole: false,
             parent: None,
+            locked: false,
+            filament: None,
         });
         self.selection.clear();
         self.selection.push(id);

@@ -24,6 +24,7 @@ pub enum ExchangeError {
     Malformed,
     UnsupportedStep,
     Outline(String),
+    Bambu(String),
 }
 
 impl std::fmt::Display for ExchangeError {
@@ -35,6 +36,7 @@ impl std::fmt::Display for ExchangeError {
             ExchangeError::Malformed => "That file could not be read.",
             ExchangeError::UnsupportedStep => "This STEP file has no triangulated faces. This build reads POLY_LOOP faces of CARTESIAN_POINT coordinates, in millimetres, Z-up. Exact B-rep is not read.",
             ExchangeError::Outline(text) => text.as_str(),
+            ExchangeError::Bambu(text) => text.as_str(),
         };
         f.write_str(text)
     }
@@ -52,11 +54,11 @@ struct Body {
     mesh: Mesh,
 }
 
-fn to_z_up(p: [f32; 3]) -> [f32; 3] {
+pub(crate) fn to_z_up(p: [f32; 3]) -> [f32; 3] {
     [p[0], -p[2], p[1]]
 }
 
-fn to_y_up(p: [f32; 3]) -> [f32; 3] {
+pub(crate) fn to_y_up(p: [f32; 3]) -> [f32; 3] {
     [p[0], p[2], -p[1]]
 }
 
@@ -68,7 +70,7 @@ fn guard_bytes(bytes: &[u8], limit: usize) -> Result<(), ExchangeError> {
     }
 }
 
-fn guard_tris(count: usize) -> Result<(), ExchangeError> {
+pub(crate) fn guard_tris(count: usize) -> Result<(), ExchangeError> {
     if count > MAX_TRIANGLES {
         Err(ExchangeError::TooManyTriangles)
     } else {
@@ -852,7 +854,7 @@ fn ref_list(body: &str) -> Vec<String> {
         .collect()
 }
 
-fn face_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+pub(crate) fn face_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
     let mut normals = vec![[0.0, 1.0, 0.0]; positions.len()];
     for tri in indices.chunks_exact(3) {
         let a = Vec3::from_array(positions[tri[0] as usize]);
@@ -916,7 +918,7 @@ fn xml_escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn xml_tags<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
+pub(crate) fn xml_tags<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
     let mut out = Vec::new();
     let needle = format!("<{name}");
     let mut rest = text;
@@ -937,20 +939,20 @@ fn xml_tags<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
     out
 }
 
-fn attr(tag: &str, name: &str) -> Option<String> {
+pub(crate) fn attr(tag: &str, name: &str) -> Option<String> {
     let needle = format!("{name}=\"");
     let start = tag.find(&needle)? + needle.len();
     let end = tag[start..].find('"')? + start;
     Some(tag[start..end].to_string())
 }
 
-fn attr_f32(tag: &str, name: &str) -> Result<f32, ExchangeError> {
+pub(crate) fn attr_f32(tag: &str, name: &str) -> Result<f32, ExchangeError> {
     attr(tag, name)
         .and_then(|value| value.parse().ok())
         .ok_or(ExchangeError::Malformed)
 }
 
-fn attr_u32(tag: &str, name: &str) -> Result<u32, ExchangeError> {
+pub(crate) fn attr_u32(tag: &str, name: &str) -> Result<u32, ExchangeError> {
     attr(tag, name)
         .and_then(|value| value.parse().ok())
         .ok_or(ExchangeError::Malformed)
@@ -974,7 +976,7 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>"#;
 
-fn zip_store(files: &[(&str, &[u8])]) -> Vec<u8> {
+pub(crate) fn zip_store(files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for (name, data) in files {
@@ -1026,7 +1028,7 @@ fn zip_store(files: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-fn unzip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ExchangeError> {
+pub(crate) fn unzip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ExchangeError> {
     if bytes.len() < 22 || u32::from_le_bytes(bytes[0..4].try_into().unwrap()) != 0x04034b50 {
         return Err(ExchangeError::Malformed);
     }

@@ -31,6 +31,10 @@ struct ProjectFile {
     version: u32,
     objects: Vec<Object>,
     next_id: u64,
+    #[serde(default)]
+    plates: Vec<u32>,
+    #[serde(default)]
+    locked_plates: Vec<u32>,
 }
 
 pub fn document_to_json(doc: &Document) -> String {
@@ -39,6 +43,8 @@ pub fn document_to_json(doc: &Document) -> String {
         version: PROJECT_VERSION,
         objects: doc.objects().to_vec(),
         next_id: doc.next_id_value(),
+        plates: doc.extra_slots().to_vec(),
+        locked_plates: doc.locked_slots().to_vec(),
     };
     serde_json::to_string_pretty(&file).unwrap_or_else(|_| "{}".into())
 }
@@ -51,5 +57,7 @@ pub fn document_from_json(text: &str) -> Result<Document, ProjectError> {
     if file.version == 0 || file.version > PROJECT_VERSION {
         return Err(ProjectError::UnsupportedVersion);
     }
-    Ok(Document::from_objects(file.objects, file.next_id))
+    let mut doc = Document::from_objects(file.objects, file.next_id);
+    doc.restore_plates(file.plates, file.locked_plates);
+    Ok(doc)
 }

@@ -4,10 +4,11 @@ use std::rc::Rc;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    document_from_obj, document_from_step, document_to_obj, document_to_step, document_to_stl,
-    export_3mf, import_3mf, import_dxf, import_stl, import_svg, ray_plane_y, snap_mm, BooleanOp,
-    Document, History, ObjectId, Ray, Shape, SketchDef, SketchOp, DEFAULT_MODEL_COLOR,
-    DEFAULT_SNAP_MM, PLATE_SIZE_MM,
+    bambu_material, bambu_materials, document_from_obj, document_from_step, document_to_obj,
+    document_to_step, document_to_stl, export_3mf, export_bambu_3mf, extract_loaded_filaments,
+    import_3mf, import_bambu_3mf, import_dxf, import_stl, import_svg, ray_plane_y, snap_mm,
+    BooleanOp, Document, FilamentRef, History, LoadedFilament, ObjectId, Ray, Shape, SketchDef,
+    SketchOp, DEFAULT_BAMBU_MATERIAL, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -102,6 +103,10 @@ pub struct PrintCaddyApp {
     project_in: files::TextIncoming,
     show_import: bool,
     show_export: bool,
+    material_id: String,
+    loaded: Vec<LoadedFilament>,
+    /// The next file dialog fills Currently Loaded instead of the model.
+    settings_import: bool,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
     /// The frame a touch ends, the browser also synthesises a mouse click. Skip that click.
@@ -151,6 +156,9 @@ impl PrintCaddyApp {
             project_in: files::text_slot(),
             show_import: false,
             show_export: false,
+            material_id: DEFAULT_BAMBU_MATERIAL.into(),
+            loaded: library::load_filaments(),
+            settings_import: false,
             gesture: Gesture::None,
             touches: HashMap::new(),
             swallow_mouse: false,
@@ -362,6 +370,25 @@ impl PrintCaddyApp {
         let Some((name, bytes)) = self.incoming.borrow_mut().take() else {
             return;
         };
+        if self.settings_import {
+            self.settings_import = false;
+            match extract_loaded_filaments(&bytes, &name) {
+                Ok(list) if list.is_empty() => {
+                    self.notice = "No filaments found in that file. Use a Bambu Studio project (.3mf), a .bbscfg / .bbsflmt bundle, or a filament preset .json.".into();
+                }
+                Ok(list) => {
+                    let count = list.len();
+                    self.loaded = list;
+                    library::store_filaments(&self.loaded);
+                    self.notice = format!(
+                        "{count} filament{} loaded.",
+                        if count == 1 { "" } else { "s" }
+                    );
+                }
+                Err(err) => self.notice = err.to_string(),
+            }
+            return;
+        }
         self.history.end();
         self.history.begin(&self.doc);
         let before = self.doc.objects().len();
@@ -382,7 +409,14 @@ impl PrintCaddyApp {
     fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".3mf") {
-            import_3mf(&mut self.doc, bytes).map_err(|err| err.to_string())
+            let bambu = bytes
+                .windows(b"project_settings.config".len())
+                .any(|window| window == b"project_settings.config");
+            if bambu {
+                import_bambu_3mf(&mut self.doc, bytes).map_err(|err| err.to_string())
+            } else {
+                import_3mf(&mut self.doc, bytes).map_err(|err| err.to_string())
+            }
         } else if lower.ends_with(".obj") {
             document_from_obj(&mut self.doc, bytes).map_err(|err| err.to_string())
         } else if lower.ends_with(".svg") {
@@ -733,6 +767,12 @@ impl PrintCaddyApp {
             _ => None,
         };
         match self.gesture {
+            Gesture::Move { engaged: true, .. } | Gesture::Axis { engaged: true, .. } => {
+                let ids = self.doc.motion_ids();
+                for id in ids {
+                    self.doc.apply_plate_lock(id);
+                }
+            }
             Gesture::Move {
                 engaged: false, id, ..
             } => {
@@ -1119,17 +1159,11 @@ impl eframe::App for PrintCaddyApp {
                     });
                     ui.label(format!("Project {}", self.project_name));
                     ui.label("Colour");
-                    ui.horizontal_wrapped(|ui| {
-                        for hex in theme::swatches() {
-                            let color = printcaddy_core::Color::from_hex(hex);
-                            let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
-                            ui.painter().rect_filled(rect, 3.0, Color32::from_rgb(color.r, color.g, color.b));
-                            if response.clicked() {
-                                self.paint_selection(color);
-                            }
-                        }
-                    });
-                    ui.small(format!("New bodies stay {}", printcaddy_core::DEFAULT_MODEL_COLOR.hex_string()));
+                    self.colour_picker(ui);
+                    ui.small(format!(
+                        "New bodies stay {}",
+                        printcaddy_core::DEFAULT_MODEL_COLOR.hex_string()
+                    ));
                     ui.horizontal(|ui| {
                         undo = ui.add_enabled(self.history.can_undo(), egui::Button::new("Undo")).clicked();
                         redo = ui.add_enabled(self.history.can_redo(), egui::Button::new("Redo")).clicked();
@@ -1240,7 +1274,25 @@ impl eframe::App for PrintCaddyApp {
                         Color32::from_rgb(DEFAULT_MODEL_COLOR.r, DEFAULT_MODEL_COLOR.g, DEFAULT_MODEL_COLOR.b),
                     );
                     ui.label(format!("Default colour {}", DEFAULT_MODEL_COLOR.hex_string()));
-                    ui.label(format!("Plate {PLATE_SIZE_MM:.0} × {PLATE_SIZE_MM:.0} mm"));
+                    ui.label(format!(
+                        "Plate {PLATE_SIZE_MM:.0} × {PLATE_SIZE_MM:.0} mm · {} plates",
+                        self.doc.plate_layouts().len()
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Add plate").clicked() {
+                            self.history.end();
+                            self.history.begin(&self.doc);
+                            let slot = self.doc.add_plate();
+                            self.history.end();
+                            self.notice = format!("Added plate {slot}.");
+                        }
+                        if ui.button("Delete plate").clicked() {
+                            self.delete_active_plate();
+                        }
+                        if ui.button("Lock plate").clicked() {
+                            self.toggle_active_plate_lock();
+                        }
+                    });
                     self.properties(ui);
                     ui.separator();
                     ui.label(self.notice.clone());
@@ -1319,10 +1371,17 @@ impl eframe::App for PrintCaddyApp {
                 }
                 let aspect = Self::aspect_of(rect);
                 let colors = theme::palette(self.theme);
-                let grid = std::sync::Arc::new(scene::GridLines::colored(
+                let centers: Vec<(f32, f32)> = self
+                    .doc
+                    .plate_layouts()
+                    .iter()
+                    .map(|plate| (plate.center_x, plate.center_z))
+                    .collect();
+                let grid = std::sync::Arc::new(scene::GridLines::plates(
                     colors.grid_minor,
                     colors.grid_major,
                     colors.grid_border,
+                    &centers,
                 ));
                 let frame = scene::draw_frame(
                     &self.doc,
@@ -1338,6 +1397,7 @@ impl eframe::App for PrintCaddyApp {
                     overlay::paint_gizmos(ui.painter(), &self.camera, aspect, rect, min, max);
                 }
                 self.paint_sketch(ui.painter(), aspect, rect);
+                self.paint_plate_numbers(ui.painter(), aspect, rect);
                 let cube = overlay::view_cube_rect(rect);
                 self.cube_faces = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
             });
@@ -1408,7 +1468,10 @@ impl PrintCaddyApp {
                     if ui.button("STEP triangles").clicked() {
                         chosen = Some("step");
                     }
-                    ui.small("STEP here is triangulated POLY_LOOP faces, not analytic B-rep.");
+                    if ui.button("Bambu 3MF").clicked() {
+                        chosen = Some("bambu");
+                    }
+                    ui.small("STEP here is triangulated POLY_LOOP faces, not analytic B-rep. Bambu 3MF carries a filament slot per colour.");
                 });
             if let Some(kind) = chosen {
                 self.export_exchange(kind);
@@ -1434,6 +1497,13 @@ impl PrintCaddyApp {
                 files::download_text("printcaddy.obj", &text);
                 self.notice = "Exported OBJ.".into();
             }
+            "bambu" => match export_bambu_3mf(&self.doc, selected) {
+                Ok(bytes) => {
+                    files::download_named("printcaddy-bambu.3mf", "model/3mf", &bytes);
+                    self.notice = "Exported Bambu 3MF.".into();
+                }
+                Err(err) => self.notice = err.to_string(),
+            },
             "step" => match document_to_step(&self.doc, selected) {
                 Ok(text) => {
                     files::download_text("printcaddy.step", &text);
@@ -1445,7 +1515,157 @@ impl PrintCaddyApp {
         }
     }
 
-    fn paint_selection(&mut self, color: printcaddy_core::Color) {
+    fn colour_picker(&mut self, ui: &mut egui::Ui) {
+        if !self.loaded.is_empty() {
+            ui.label("Currently Loaded");
+            ui.small(format!("{} from Bambu Studio", self.loaded.len()));
+            let loaded = self.loaded.clone();
+            for filament in loaded {
+                let color = colour_from_hex(&filament.color);
+                ui.horizontal(|ui| {
+                    if swatch(ui, color).clicked() {
+                        self.paint_filament(
+                            color,
+                            FilamentRef {
+                                material: filament.material_id.clone().unwrap_or_default(),
+                                name: filament.color_name.clone().unwrap_or_default(),
+                                code: filament.code.clone().unwrap_or_default(),
+                            },
+                        );
+                    }
+                    ui.label(format!(
+                        "{} · {}",
+                        filament.color_name.as_deref().unwrap_or(&filament.color),
+                        filament.name
+                    ));
+                });
+            }
+        }
+        let materials = bambu_materials();
+        let current = bambu_material(&self.material_id);
+        let mut chosen = self.material_id.clone();
+        egui::ComboBox::from_label("Material")
+            .selected_text(format!("Bambu {}", current.name))
+            .show_ui(ui, |ui| {
+                for material in materials {
+                    ui.selectable_value(
+                        &mut chosen,
+                        material.id.clone(),
+                        format!("Bambu {}", material.name),
+                    );
+                }
+            });
+        if chosen != self.material_id {
+            self.material_id = chosen;
+        }
+        let current = bambu_material(&self.material_id);
+        ui.label(format!("Bambu {} colours", current.name));
+        let colors = current.colors.clone();
+        let material_id = current.id.clone();
+        ui.horizontal_wrapped(|ui| {
+            for color in colors {
+                let paint = colour_from_hex(&color.hex);
+                let response = swatch(ui, paint);
+                if response.clicked() {
+                    self.paint_filament(
+                        paint,
+                        FilamentRef {
+                            material: material_id.clone(),
+                            name: color.name.clone(),
+                            code: color.code.clone(),
+                        },
+                    );
+                }
+                response.on_hover_text(format!("{} {}", color.name, color.hex));
+            }
+        });
+        ui.label("Plain");
+        ui.horizontal_wrapped(|ui| {
+            for hex in theme::swatches() {
+                let color = printcaddy_core::Color::from_hex(hex);
+                if swatch(ui, color).clicked() {
+                    self.paint_plain(color);
+                }
+            }
+        });
+    }
+
+    fn delete_active_plate(&mut self) {
+        let slot = self
+            .doc
+            .selection()
+            .and_then(|id| self.doc.object(id))
+            .map(|object| self.doc.plate_at(object.position).slot)
+            .or_else(|| self.doc.plate_layouts().last().map(|plate| plate.slot));
+        let Some(slot) = slot else {
+            return;
+        };
+        self.history.end();
+        self.history.begin(&self.doc);
+        match self.doc.delete_plate(slot) {
+            Ok(()) => {
+                self.history.end();
+                self.notice = "Deleted the plate. Its bodies moved beside the grid.".into();
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err;
+            }
+        }
+    }
+
+    fn toggle_active_plate_lock(&mut self) {
+        let Some(slot) = self
+            .doc
+            .selection()
+            .and_then(|id| self.doc.object(id))
+            .map(|object| self.doc.plate_at(object.position).slot)
+            .or_else(|| Some(0))
+        else {
+            return;
+        };
+        let locked = self
+            .doc
+            .plate_layouts()
+            .iter()
+            .find(|plate| plate.slot == slot)
+            .is_some_and(|plate| {
+                self.doc.objects().iter().any(|object| {
+                    object.locked && self.doc.plate_at(object.position).slot == plate.slot
+                })
+            });
+        self.history.end();
+        self.history.begin(&self.doc);
+        self.doc.lock_plate(slot, !locked);
+        self.history.end();
+        self.notice = if locked {
+            "Unlocked the plate.".into()
+        } else {
+            "Locked the plate.".into()
+        };
+    }
+
+    fn paint_plate_numbers(&self, painter: &egui::Painter, aspect: f32, rect: Rect) {
+        for plate in self.doc.plate_layouts() {
+            let at = glam::Vec3::new(
+                plate.center_x + PLATE_SIZE_MM * 0.5 - 18.0,
+                0.4,
+                plate.center_z + PLATE_SIZE_MM * 0.5 - 16.0,
+            );
+            let Some(screen) = overlay::project(&self.camera, aspect, rect, at) else {
+                continue;
+            };
+            painter.text(
+                screen,
+                egui::Align2::CENTER_CENTER,
+                format!("{:02}", plate.number),
+                egui::FontId::proportional(14.0),
+                Color32::from_rgb(201, 212, 219),
+            );
+        }
+    }
+
+    fn paint_filament(&mut self, color: printcaddy_core::Color, filament: FilamentRef) {
         let ids = self.doc.selected_ids().to_vec();
         if ids.is_empty() {
             self.notice = "Select a body to recolour.".into();
@@ -1455,6 +1675,27 @@ impl PrintCaddyApp {
         self.history.begin(&self.doc);
         for id in ids {
             self.doc.set_color(id, color);
+            if !filament.material.is_empty() {
+                self.doc.set_filament(id, filament.clone());
+            }
+        }
+        self.history.end();
+        self.notice = format!("Painted the selection {}", color.hex_string());
+    }
+
+    fn paint_plain(&mut self, color: printcaddy_core::Color) {
+        let ids = self.doc.selected_ids().to_vec();
+        if ids.is_empty() {
+            self.notice = "Select a body to recolour.".into();
+            return;
+        }
+        self.history.end();
+        self.history.begin(&self.doc);
+        for id in ids {
+            self.doc.set_color(id, color);
+            if let Some(object) = self.doc.object_mut(id) {
+                object.filament = None;
+            }
         }
         self.history.end();
         self.notice = format!("Painted the selection {}", color.hex_string());
@@ -1482,6 +1723,39 @@ impl PrintCaddyApp {
                     library::store_settings(self.theme.label(), self.mobile);
                 }
                 ui.small("Mobile mode enlarges the handles and the buttons.");
+                ui.separator();
+                ui.label("Loaded filaments");
+                ui.small("Import the filaments loaded in Bambu Studio. They appear as Currently Loaded at the top of the colour picker.");
+                if ui.button(if self.loaded.is_empty() {
+                    "Import from Bambu Studio"
+                } else {
+                    "Re-import from Bambu Studio"
+                }).clicked()
+                {
+                    self.settings_import = true;
+                    files::pick_file(self.incoming.clone(), ".3mf,.json,.bbscfg,.bbsflmt,.zip");
+                }
+                if !self.loaded.is_empty() && ui.button("Clear loaded filaments").clicked() {
+                    self.loaded.clear();
+                    library::store_filaments(&self.loaded);
+                    self.notice = "Currently Loaded cleared.".into();
+                }
+                for filament in &self.loaded {
+                    ui.horizontal(|ui| {
+                        let color = printcaddy_core::Color::from_hex(
+                            u32::from_str_radix(filament.color.trim_start_matches('#'), 16)
+                                .unwrap_or(0x8A98A6),
+                        );
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
+                        ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(color.r, color.g, color.b));
+                        ui.label(format!(
+                            "{} {} · {}",
+                            filament.slot,
+                            filament.color_name.as_deref().unwrap_or(&filament.color),
+                            filament.name
+                        ));
+                    });
+                }
             });
         self.show_settings = open;
     }
@@ -1762,4 +2036,19 @@ fn ray_onto_plane(ray: Ray, origin: glam::Vec3, normal: glam::Vec3) -> Option<gl
         return None;
     }
     Some(ray.origin + ray.direction * t)
+}
+
+fn colour_from_hex(text: &str) -> printcaddy_core::Color {
+    let hex = text.trim().trim_start_matches('#');
+    let hex = &hex[..hex.len().min(6)];
+    u32::from_str_radix(hex, 16)
+        .map(printcaddy_core::Color::from_hex)
+        .unwrap_or(DEFAULT_MODEL_COLOR)
+}
+
+fn swatch(ui: &mut egui::Ui, color: printcaddy_core::Color) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
+    ui.painter()
+        .rect_filled(rect, 3.0, Color32::from_rgb(color.r, color.g, color.b));
+    response
 }

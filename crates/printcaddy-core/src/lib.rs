@@ -1,11 +1,13 @@
 //! PrintCaddy document model. This crate has no graphics or browser dependencies.
 
+mod bambu;
 mod boolean;
 mod color;
 mod document;
 mod exchange;
 mod history;
 mod mesh;
+mod plates;
 mod project;
 mod ray;
 mod sketch;
@@ -13,6 +15,10 @@ mod solids;
 mod stl;
 mod updates;
 
+pub use bambu::{
+    bambu_material, bambu_materials, export_bambu_3mf, extract_loaded_filaments, import_bambu_3mf,
+    BambuMaterial, FilamentRef, LoadedFilament, DEFAULT_BAMBU_MATERIAL,
+};
 pub use boolean::{boolean, mesh_volume, BooleanError, BooleanOp};
 pub use color::{Color, DEFAULT_MODEL_COLOR};
 pub use document::{
@@ -25,6 +31,7 @@ pub use exchange::{
 };
 pub use history::History;
 pub use mesh::Mesh;
+pub use plates::{PlateLayout, PLATES_PER_ROW, PLATE_GAP_MM};
 pub use project::{document_from_json, document_to_json, ProjectError};
 pub use ray::{ray_plane_y, Ray};
 pub use sketch::{build_sketch, is_closed, seat_sketch, SketchDef, SketchError, SketchOp};

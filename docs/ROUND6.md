@@ -22,4 +22,4 @@ A file over 32 MB is refused. A mesh over 200 000 triangles is refused. An SVG o
 
 ## Still deferred
 
-Bambu 3MF, the slicer, top-view SVG and DXF export, and analytic STEP.
+The slicer, top-view SVG and DXF export, and analytic STEP. Bambu 3MF is round 7.
