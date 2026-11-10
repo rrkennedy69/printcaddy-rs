@@ -274,12 +274,9 @@ These are the behaviours to match, not just the presence of a widget.
 ## Accounts and helpers
 
 - [ ] Google Drive sync (sign-in, merge, settings slot)
-- [ ] AI helper panel
-- [ ] AI settings
-- [ ] layerling MCP (local and remote) so an assistant can drive the document
 - [ ] Shared designs on a server folder
 - [ ] Start page, design tabs, and home
 
 ## Explicitly out of the Rust app until the matching round
 
-The live TypeScript site is unchanged and remains the production app. Milestone 1 does not include booleans, sketches, 3MF, STEP, the slicer, Bambu export, themes, Drive, or the AI helper.
+The live TypeScript site is unchanged and remains the production app. The AI helper is not part of this rewrite.
