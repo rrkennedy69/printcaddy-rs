@@ -1,5 +1,6 @@
 //! PrintCaddy document model. This crate has no graphics or browser dependencies.
 
+mod boolean;
 mod color;
 mod document;
 mod history;
@@ -9,16 +10,17 @@ mod sketch;
 mod solids;
 mod stl;
 
+pub use boolean::{boolean, mesh_volume, BooleanError, BooleanOp};
 pub use color::{Color, DEFAULT_MODEL_COLOR};
 pub use document::{
-    Document, Object, ObjectId, ObjectKind, CYLINDER_HEIGHT, CYLINDER_RADIUS, CYLINDER_SEGMENTS,
-    DEFAULT_BOX, DEFAULT_SNAP_MM,
+    Document, GroupError, Object, ObjectId, ObjectKind, CYLINDER_HEIGHT, CYLINDER_RADIUS,
+    CYLINDER_SEGMENTS, DEFAULT_BOX, DEFAULT_SNAP_MM,
 };
 pub use history::History;
 pub use mesh::Mesh;
 pub use ray::{ray_plane_y, Ray};
 pub use sketch::{build_sketch, is_closed, seat_sketch, SketchDef, SketchError, SketchOp};
-pub use solids::Shape;
+pub use solids::{filleted_box, FilletError, Shape};
 pub use stl::{document_to_stl, import_stl, mesh_from_stl, mesh_to_stl_binary, StlError};
 
 /// Round a millimetre measure onto the snap grid. A step of 0 leaves the value alone.

@@ -17,6 +17,7 @@ pub struct DrawObject {
     pub revision: u64,
     pub color: [f32; 3],
     pub selected: bool,
+    pub alpha: f32,
     pub model: [f32; 16],
     pub mesh: Arc<UploadedMesh>,
 }
@@ -102,13 +103,25 @@ pub fn draw_frame(
     let objects = doc
         .objects()
         .iter()
-        .map(|object| DrawObject {
-            id: object.id.0,
-            revision: object.revision,
-            color: object.color.to_rgb_f32(),
-            selected: doc.is_selected(object.id),
-            model: object.model_matrix().to_cols_array(),
-            mesh: mesh_cache_for(cache, object),
+        .filter(|object| doc.is_shown(object.id))
+        .map(|object| {
+            let mut color = object.color.to_rgb_f32();
+            if object.hole {
+                color = [
+                    color[0] * 0.35 + 0.20,
+                    color[1] * 0.45 + 0.35,
+                    color[2] * 0.45 + 0.62,
+                ];
+            }
+            DrawObject {
+                id: object.id.0,
+                revision: object.revision,
+                color,
+                selected: doc.is_selected(object.id),
+                alpha: doc.display_alpha(object.id),
+                model: doc.display_matrix(object.id).to_cols_array(),
+                mesh: mesh_cache_for(cache, object),
+            }
         })
         .collect();
     DrawFrame {

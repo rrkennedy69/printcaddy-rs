@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    document_to_stl, import_stl, ray_plane_y, snap_mm, Document, History, ObjectId, Ray, Shape,
-    SketchDef, SketchOp, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
+    document_to_stl, import_stl, ray_plane_y, snap_mm, BooleanOp, Document, History, ObjectId, Ray,
+    Shape, SketchDef, SketchOp, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -73,6 +73,7 @@ pub struct PrintCaddyApp {
     sketch_path: Vec<[f32; 2]>,
     sketch_height: f32,
     sketch_angle: f32,
+    fillet_radius: f32,
     editing_sketch: Option<ObjectId>,
     pending_point: Option<[f32; 2]>,
     /// Face centres of the view cube from the last paint, for the next click.
@@ -103,6 +104,7 @@ impl PrintCaddyApp {
             sketch_path: Vec::new(),
             sketch_height: 10.0,
             sketch_angle: 360.0,
+            fillet_radius: 2.0,
             editing_sketch: None,
             pending_point: None,
             cube_faces: Vec::new(),
@@ -295,8 +297,9 @@ impl PrintCaddyApp {
             Some(object) => {
                 let (w, d, h) = object.size();
                 format!(
-                    "objects={} selected={} x={:.2} y={:.2} z={:.2} rx={:.1} ry={:.1} rz={:.1} w={:.2} d={:.2} h={:.2} color={}",
+                    "objects={} n={} selected={} x={:.2} y={:.2} z={:.2} rx={:.1} ry={:.1} rz={:.1} w={:.2} d={:.2} h={:.2} hole={} color={}",
                     self.doc.objects().len(),
+                    self.doc.selected_ids().len(),
                     object.name,
                     object.position.x,
                     object.position.y,
@@ -307,6 +310,7 @@ impl PrintCaddyApp {
                     w,
                     d,
                     h,
+                    if object.hole { "yes" } else { "no" },
                     object.color.hex_string()
                 )
             }
@@ -331,6 +335,96 @@ impl PrintCaddyApp {
             }
         }
         self.history.end();
+    }
+
+    fn combine(&mut self, op: BooleanOp) {
+        self.history.end();
+        self.history.begin(&self.doc);
+        match self.doc.boolean_selected(op) {
+            Ok(()) => {
+                self.history.end();
+                self.notice = match op {
+                    BooleanOp::Union => "Joined the selection.".into(),
+                    BooleanOp::Subtract => "Cut the other bodies out of the primary.".into(),
+                    BooleanOp::Intersect => "Kept only the shared volume.".into(),
+                };
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err.to_string();
+            }
+        }
+    }
+
+    fn make_group(&mut self) {
+        self.history.end();
+        self.history.begin(&self.doc);
+        match self.doc.group_selected() {
+            Ok(_) => {
+                self.history.end();
+                self.notice = "Grouped. A hole in the group cuts the solids until ungroup.".into();
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err.to_string();
+            }
+        }
+    }
+
+    fn make_ungroup(&mut self) {
+        self.history.end();
+        self.history.begin(&self.doc);
+        match self.doc.ungroup_selected() {
+            Ok(()) => {
+                self.history.end();
+                self.notice = "Ungrouped. The bodies are separate again.".into();
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err.to_string();
+            }
+        }
+    }
+
+    fn toggle_hole(&mut self) {
+        let ids = self.doc.selected_ids().to_vec();
+        if ids.is_empty() {
+            self.notice = "Select a body to mark as a hole.".into();
+            return;
+        }
+        let make_hole = ids
+            .iter()
+            .any(|id| self.doc.object(*id).is_some_and(|object| !object.hole));
+        self.history.end();
+        self.history.begin(&self.doc);
+        for id in ids {
+            self.doc.set_hole(id, make_hole);
+        }
+        self.history.end();
+        self.notice = if make_hole {
+            "Marked as a hole. Group it with a solid to cut.".into()
+        } else {
+            "Marked as a solid.".into()
+        };
+    }
+
+    fn apply_fillet(&mut self) {
+        let Some(id) = self.doc.selection() else {
+            self.notice = "Select a box to fillet.".into();
+            return;
+        };
+        self.history.end();
+        self.history.begin(&self.doc);
+        match self.doc.fillet(id, self.fillet_radius) {
+            Ok(()) => {
+                self.history.end();
+                self.notice = format!("Filleted the box at {:.2} mm.", self.fillet_radius);
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.notice = err.to_string();
+            }
+        }
     }
 
     fn export(&mut self) {
@@ -517,7 +611,7 @@ impl PrintCaddyApp {
             }
             let group = self
                 .doc
-                .selected_ids()
+                .motion_ids()
                 .iter()
                 .filter_map(|member| {
                     self.doc
@@ -677,7 +771,7 @@ impl PrintCaddyApp {
         } else {
             let starts = self
                 .doc
-                .selected_ids()
+                .motion_ids()
                 .iter()
                 .filter_map(|id| self.doc.object(*id).map(|object| (*id, object.position)))
                 .collect();
@@ -1013,6 +1107,34 @@ impl eframe::App for PrintCaddyApp {
                                 self.edit_selected_sketch();
                             }
                         });
+                    }
+                    ui.separator();
+                    ui.label("Combine");
+                    ui.horizontal(|ui| {
+                        if ui.button("Join").clicked() {
+                            self.combine(BooleanOp::Union);
+                        }
+                        if ui.button("Subtract").clicked() {
+                            self.combine(BooleanOp::Subtract);
+                        }
+                        if ui.button("Intersect").clicked() {
+                            self.combine(BooleanOp::Intersect);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Group").clicked() {
+                            self.make_group();
+                        }
+                        if ui.button("Ungroup").clicked() {
+                            self.make_ungroup();
+                        }
+                        if ui.button("Hole").clicked() {
+                            self.toggle_hole();
+                        }
+                    });
+                    number(ui, "Fillet", &mut self.fillet_radius);
+                    if ui.button("Fillet box").clicked() {
+                        self.apply_fillet();
                     }
                     ui.separator();
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());

@@ -25,6 +25,7 @@ precision mediump float;
 in vec3 v_n;
 uniform vec3 u_color;
 uniform float u_selected;
+uniform float u_alpha;
 out vec4 frag;
 void main() {
     vec3 n = normalize(v_n);
@@ -32,7 +33,7 @@ void main() {
     float fill = clamp(dot(n, normalize(vec3(-0.45, 0.15, -0.55))), 0.0, 1.0);
     vec3 color = u_color * (0.34 + 0.58 * key + 0.16 * fill);
     color = mix(color, vec3(0.55, 0.86, 1.0), u_selected * 0.42);
-    frag = vec4(color, 1.0);
+    frag = vec4(color, u_alpha);
 }
 "#;
 
@@ -175,21 +176,38 @@ fn paint(
         let model_loc = gl.get_uniform_location(gpu.mesh_program, "u_model");
         let color_loc = gl.get_uniform_location(gpu.mesh_program, "u_color");
         let sel_loc = gl.get_uniform_location(gpu.mesh_program, "u_selected");
+        let alpha_loc = gl.get_uniform_location(gpu.mesh_program, "u_alpha");
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
-        for object in &frame.objects {
-            let Some(mesh) = gpu.meshes.get(&object.id) else {
-                continue;
-            };
-            gl.uniform_matrix_4_f32_slice(model_loc.as_ref(), false, &object.model);
-            gl.uniform_3_f32(
-                color_loc.as_ref(),
-                object.color[0],
-                object.color[1],
-                object.color[2],
-            );
-            gl.uniform_1_f32(sel_loc.as_ref(), if object.selected { 1.0 } else { 0.0 });
-            gl.bind_vertex_array(Some(mesh.vao));
-            gl.draw_elements(glow::TRIANGLES, mesh.count, glow::UNSIGNED_INT, 0);
+        for transparent in [false, true] {
+            if transparent {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.depth_mask(false);
+            }
+            for object in &frame.objects {
+                let is_glass = object.alpha < 0.99;
+                if is_glass != transparent {
+                    continue;
+                }
+                let Some(mesh) = gpu.meshes.get(&object.id) else {
+                    continue;
+                };
+                gl.uniform_matrix_4_f32_slice(model_loc.as_ref(), false, &object.model);
+                gl.uniform_3_f32(
+                    color_loc.as_ref(),
+                    object.color[0],
+                    object.color[1],
+                    object.color[2],
+                );
+                gl.uniform_1_f32(sel_loc.as_ref(), if object.selected { 1.0 } else { 0.0 });
+                gl.uniform_1_f32(alpha_loc.as_ref(), object.alpha);
+                gl.bind_vertex_array(Some(mesh.vao));
+                gl.draw_elements(glow::TRIANGLES, mesh.count, glow::UNSIGNED_INT, 0);
+            }
+            if transparent {
+                gl.depth_mask(true);
+                gl.disable(glow::BLEND);
+            }
         }
 
         gl.bind_vertex_array(None);

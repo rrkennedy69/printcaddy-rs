@@ -113,11 +113,11 @@ Round 4 draws a polyline on the plate and finishes it. Arcs, curves, constraints
 
 - [ ] Copy, paste, duplicate, delete
 - [x] Undo and redo
-- [ ] Solid and hole
-- [ ] Group, including nested groups, and Edit group (E) / Done
+- [x] Solid and hole — a hole is see-through until it is grouped with a solid, which cuts it out; ungroup restores the bodies
+- [x] Group and ungroup — members move together; a group can contain a group; Edit group (E) / Done is not in yet
 - [ ] Bundle (parts move together, export as separate coloured bodies)
 - [ ] Multicolour groups that survive holes and export
-- [ ] Intersection, and intersection preview
+- [x] Intersection — Join, Subtract, and Intersect replace the selection with one closed mesh; the common-part preview is not in yet
 - [ ] Cut out one body from another with a gap
 - [ ] Hull
 - [ ] Loft two sketches or SVGs
@@ -128,7 +128,7 @@ Round 4 draws a polyline on the plate and finishes it. Arcs, curves, constraints
 - [ ] Hole pattern on a face (round, square, rectangular, hex, slot; grid or staggered; margin; through or depth)
 - [ ] Face tool (push or pocket, inset, corner radius, depth, preview, including on imported STL)
 - [ ] Flexi joints (print-in-place links, clearance, swing, joint size)
-- [ ] Chamfer and fillet, including changing or removing them later
+- [x] Fillet a box — every edge, typed radius from 0.2 mm up to 0.2 mm short of half the smallest side. One clicked edge, chamfer, and editing the fillet later are not in yet
 - [ ] Hollow / shell, open on chosen sides or closed
 - [ ] Offset (grow or shrink 0.01–10 mm)
 - [ ] Delete face

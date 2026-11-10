@@ -5,6 +5,8 @@
 
 use std::f32::consts::TAU;
 
+use glam::Vec3;
+
 use crate::mesh::{box_mesh, Mesh};
 
 pub const CYLINDER_SEGMENTS: u32 = 32;
@@ -290,6 +292,168 @@ fn centroid(points: &[[f32; 2]]) -> (f32, f32) {
         .iter()
         .fold((0.0, 0.0), |(x, z), p| (x + p[0], z + p[1]));
     (sx / n, sz / n)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilletError {
+    NotABox,
+    RadiusTooSmall,
+    RadiusTooLarge,
+}
+
+impl std::fmt::Display for FilletError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            FilletError::NotABox => "Fillet only rounds the edges of a box.",
+            FilletError::RadiusTooSmall => "The fillet radius must be at least 0.2 mm.",
+            FilletError::RadiusTooLarge => {
+                "The fillet radius must be at least 0.2 mm shorter than half the smallest side."
+            }
+        };
+        f.write_str(text)
+    }
+}
+
+/// Round every edge of a box. The radius has to be at least 0.2 mm and at least
+/// 0.2 mm short of half the smallest side. Top, bottom, and vertical edges are all rounded.
+pub fn filleted_box(width: f32, depth: f32, height: f32, radius: f32) -> Result<Mesh, FilletError> {
+    if radius < 0.2 {
+        return Err(FilletError::RadiusTooSmall);
+    }
+    let limit = width.min(depth).min(height) * 0.5 - 0.2;
+    if radius > limit {
+        return Err(FilletError::RadiusTooLarge);
+    }
+    Ok(rounded_edges(width, depth, height, radius))
+}
+
+fn rounded_edges(width: f32, depth: f32, height: f32, radius: f32) -> Mesh {
+    let center = Vec3::new(0.0, height * 0.5, 0.0);
+    let half = Vec3::new(width * 0.5, height * 0.5, depth * 0.5);
+    let seg = 4i32;
+    let faces = [
+        (
+            Vec3::new(-half.x, half.y, -half.z),
+            Vec3::new(width, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, depth),
+        ),
+        (
+            Vec3::new(-half.x, -half.y, half.z),
+            Vec3::new(width, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, -depth),
+        ),
+        (
+            Vec3::new(half.x, -half.y, -half.z),
+            Vec3::new(0.0, 0.0, depth),
+            Vec3::new(0.0, height, 0.0),
+        ),
+        (
+            Vec3::new(-half.x, -half.y, half.z),
+            Vec3::new(0.0, 0.0, -depth),
+            Vec3::new(0.0, height, 0.0),
+        ),
+        (
+            Vec3::new(half.x, -half.y, half.z),
+            Vec3::new(-width, 0.0, 0.0),
+            Vec3::new(0.0, height, 0.0),
+        ),
+        (
+            Vec3::new(-half.x, -half.y, -half.z),
+            Vec3::new(width, 0.0, 0.0),
+            Vec3::new(0.0, height, 0.0),
+        ),
+    ];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+    for (origin, axis_u, axis_v) in faces {
+        let mut grid = Vec::new();
+        for iv in 0..=seg {
+            for iu in 0..=seg {
+                let u = iu as f32 / seg as f32;
+                let v = iv as f32 / seg as f32;
+                let point = origin + axis_u * u + axis_v * v;
+                grid.push(round_corner(point, half, radius) + center);
+            }
+        }
+        let stride = seg + 1;
+        for iv in 0..seg {
+            for iu in 0..seg {
+                let i00 = (iv * stride + iu) as usize;
+                let i10 = i00 + 1;
+                let i01 = i00 + stride as usize;
+                let i11 = i01 + 1;
+                push_rounded_tri(
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    grid[i00],
+                    grid[i10],
+                    grid[i11],
+                    center,
+                );
+                push_rounded_tri(
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    grid[i00],
+                    grid[i11],
+                    grid[i01],
+                    center,
+                );
+            }
+        }
+    }
+    Mesh {
+        positions,
+        normals,
+        indices,
+    }
+}
+
+fn round_corner(point: Vec3, half: Vec3, radius: f32) -> Vec3 {
+    let inner = half - Vec3::splat(radius);
+    let ax = point.x.abs();
+    let ay = point.y.abs();
+    let az = point.z.abs();
+    let dx = (ax - inner.x).max(0.0);
+    let dy = (ay - inner.y).max(0.0);
+    let dz = (az - inner.z).max(0.0);
+    let len = (dx * dx + dy * dy + dz * dz).sqrt();
+    if len <= 1.0e-8 {
+        return point;
+    }
+    Vec3::new(
+        point.x.signum() * (ax - dx + dx / len * radius),
+        point.y.signum() * (ay - dy + dy / len * radius),
+        point.z.signum() * (az - dz + dz / len * radius),
+    )
+}
+
+fn push_rounded_tri(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    center: Vec3,
+) {
+    let mut normal = (b - a).cross(c - a);
+    if normal.length_squared() < 1.0e-10 {
+        return;
+    }
+    normal = normal.normalize();
+    let mid = (a + b + c) / 3.0;
+    if normal.dot(mid - center) < 0.0 {
+        normal = -normal;
+    }
+    let base = positions.len() as u32;
+    for point in [a, b, c] {
+        positions.push(point.to_array());
+        normals.push(normal.to_array());
+    }
+    indices.extend_from_slice(&[base, base + 1, base + 2]);
 }
 
 fn rounded_box(width: f32, depth: f32, height: f32, fillet: f32) -> Mesh {

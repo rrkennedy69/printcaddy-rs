@@ -1,6 +1,6 @@
 use glam::Vec3;
 
-use crate::document::{Document, ObjectId};
+use crate::document::{Document, ObjectId, ObjectKind};
 use crate::mesh::{face_normal, Mesh};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,9 +48,12 @@ pub fn document_to_stl(doc: &Document, only_selected: bool) -> Vec<u8> {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
-    let selected = doc.selected_ids();
+    let filtering = only_selected && !doc.selected_ids().is_empty();
     for object in doc.objects() {
-        if only_selected && !selected.is_empty() && !selected.contains(&object.id) {
+        if !doc.is_shown(object.id) {
+            continue;
+        }
+        if filtering && !export_selected(doc, object.id) {
             continue;
         }
         let mesh = object.world_mesh();
@@ -72,6 +75,23 @@ pub fn import_stl(doc: &mut Document, name: &str, bytes: &[u8]) -> Result<Object
         return Err(StlError::Empty);
     }
     Ok(doc.add_mesh(name, mesh))
+}
+
+fn export_selected(doc: &Document, id: ObjectId) -> bool {
+    if doc.is_selected(id) {
+        return true;
+    }
+    let mut parent = doc.object(id).and_then(|object| object.parent);
+    while let Some(parent_id) = parent {
+        if doc.is_selected(parent_id) {
+            return matches!(
+                doc.object(parent_id).map(|object| &object.kind),
+                Some(ObjectKind::Group { cut: None, .. })
+            );
+        }
+        parent = doc.object(parent_id).and_then(|object| object.parent);
+    }
+    false
 }
 
 fn looks_like_ascii(bytes: &[u8]) -> bool {
