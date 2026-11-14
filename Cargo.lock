@@ -1853,6 +1853,7 @@ dependencies = [
  "egui_glow",
  "glam",
  "glow",
+ "image",
  "js-sys",
  "printcaddy-core",
  "serde_json",
