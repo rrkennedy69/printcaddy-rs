@@ -3,7 +3,7 @@
 
 use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 use glam::Vec3;
-use printcaddy_core::snap_mm;
+use printcaddy_core::{snap_mm, PLATE_SIZE_MM};
 
 use crate::camera::Camera;
 
@@ -332,9 +332,9 @@ pub fn hit_gizmo(
 }
 
 pub fn view_cube_rect(view: Rect) -> Rect {
-    let size = 112.0;
+    let size = 118.0;
     Rect::from_min_size(
-        Pos2::new(view.min.x + 12.0, view.min.y + 12.0),
+        Pos2::new(view.min.x + 10.0, view.min.y + 8.0),
         Vec2::splat(size),
     )
 }
@@ -433,32 +433,32 @@ pub fn paint_view_cube(
         (
             CubeFace::Front,
             [4, 5, 6, 7],
-            Color32::from_rgb(186, 198, 210),
+            Color32::from_rgb(255, 252, 247),
         ),
         (
             CubeFace::Back,
             [1, 0, 3, 2],
-            Color32::from_rgb(150, 162, 174),
+            Color32::from_rgb(236, 230, 220),
         ),
         (
             CubeFace::Right,
             [5, 1, 2, 6],
-            Color32::from_rgb(214, 120, 120),
+            Color32::from_rgb(250, 246, 238),
         ),
         (
             CubeFace::Left,
             [0, 4, 7, 3],
-            Color32::from_rgb(120, 150, 210),
+            Color32::from_rgb(244, 238, 228),
         ),
         (
             CubeFace::Top,
             [3, 7, 6, 2],
-            Color32::from_rgb(230, 234, 236),
+            Color32::from_rgb(255, 253, 249),
         ),
         (
             CubeFace::Bottom,
             [0, 1, 5, 4],
-            Color32::from_rgb(130, 140, 148),
+            Color32::from_rgb(228, 220, 208),
         ),
     ];
     let mut order: Vec<(f32, CubeFace, [usize; 4], Color32)> = faces
@@ -472,31 +472,34 @@ pub fn paint_view_cube(
         })
         .collect();
     order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let nearest: Vec<CubeFace> = order.iter().rev().take(3).map(|item| item.1).collect();
     let mut centers = Vec::new();
     for (_, face, idx, color) in order {
         let poly: Vec<Pos2> = idx.iter().map(|i| projected[*i]).collect();
         painter.add(egui::Shape::convex_polygon(
             poly.clone(),
             color,
-            Stroke::new(1.2_f32, Color32::from_rgb(40, 48, 56)),
+            Stroke::new(1.0_f32, Color32::from_rgb(176, 156, 128)),
         ));
         let mid = poly.iter().fold(Pos2::ZERO, |acc, p| acc + p.to_vec2()) / poly.len() as f32;
         centers.push((CubeTarget::Face(face), mid));
-        let label = match face {
-            CubeFace::Front => "F",
-            CubeFace::Back => "B",
-            CubeFace::Left => "L",
-            CubeFace::Right => "R",
-            CubeFace::Top => "T",
-            CubeFace::Bottom => "U",
-        };
-        painter.text(
-            mid,
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(11.0),
-            Color32::from_rgb(30, 36, 42),
-        );
+        if nearest.contains(&face) {
+            let label = match face {
+                CubeFace::Front => "FRONT",
+                CubeFace::Back => "BACK",
+                CubeFace::Left => "LEFT",
+                CubeFace::Right => "RIGHT",
+                CubeFace::Top => "TOP",
+                CubeFace::Bottom => "BOTTOM",
+            };
+            painter.text(
+                mid,
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional(9.0),
+                Color32::from_rgb(120, 100, 78),
+            );
+        }
     }
     for index in 0..8 {
         let faces = mesh_corner_faces(index);
@@ -568,6 +571,65 @@ pub fn hit_cube(centers: &[(CubeTarget, Pos2)], pointer: Pos2) -> Option<CubeTar
         }
     }
     best.map(|(_, _, target)| target)
+}
+
+/// Numbered ticks along the near edges of each plate, plus the design name on the bed.
+pub fn paint_rulers(
+    painter: &egui::Painter,
+    camera: &Camera,
+    aspect: f32,
+    rect: Rect,
+    centers: &[(f32, f32)],
+    design: &str,
+) {
+    let half = PLATE_SIZE_MM * 0.5;
+    let red = Color32::from_rgb(176, 64, 52);
+    let green = Color32::from_rgb(46, 130, 72);
+    for &(ox, oz) in centers {
+        for step in 1..=12 {
+            let mark = step as f32 * 10.0;
+            if mark > half - 2.0 {
+                break;
+            }
+            let x_at = Vec3::new(ox - half + mark, 0.4, oz + half + 2.0);
+            if let Some(screen) = project(camera, aspect, rect, x_at) {
+                painter.text(
+                    screen,
+                    egui::Align2::CENTER_TOP,
+                    format!("{}", step * 10),
+                    egui::FontId::proportional(10.0),
+                    red,
+                );
+            }
+            let z_at = Vec3::new(ox - half - 2.0, 0.4, oz - half + mark);
+            if let Some(screen) = project(camera, aspect, rect, z_at) {
+                painter.text(
+                    screen,
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{}", step * 10),
+                    egui::FontId::proportional(10.0),
+                    green,
+                );
+            }
+        }
+        let center = Vec3::new(ox, 0.3, oz);
+        let Some(at) = project(camera, aspect, rect, center) else {
+            continue;
+        };
+        let Some(along) = project(camera, aspect, rect, center + Vec3::X * 40.0) else {
+            continue;
+        };
+        let angle = (along - at).angle();
+        let galley = painter.layout_no_wrap(
+            design.to_string(),
+            egui::FontId::proportional(42.0),
+            Color32::from_rgb(120, 128, 134),
+        );
+        let mut shape = egui::epaint::TextShape::new(at, galley, Color32::from_rgb(120, 128, 134));
+        shape.angle = angle;
+        shape.opacity_factor = 0.16;
+        painter.add(shape);
+    }
 }
 
 pub fn paint_protractor(painter: &egui::Painter, pivot: Pos2) {

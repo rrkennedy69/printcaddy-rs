@@ -73,7 +73,7 @@ pub fn palette(theme: ThemeId) -> Palette {
             xray: false,
         },
         ThemeId::Light => Palette {
-            panel: Color32::from_rgb(244, 241, 234),
+            panel: Color32::from_rgb(247, 244, 236),
             text: Color32::from_rgb(28, 36, 48),
             viewport: [0.965, 0.953, 0.925, 1.0],
             plate: [0.80, 0.81, 0.82],

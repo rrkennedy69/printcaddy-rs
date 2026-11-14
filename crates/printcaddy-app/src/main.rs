@@ -1,5 +1,8 @@
 mod app;
 mod camera;
+mod chrome;
+mod icon_bytes;
+mod icons;
 mod drive;
 mod files;
 mod library;

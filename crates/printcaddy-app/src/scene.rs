@@ -60,6 +60,25 @@ impl GridLines {
                 vertices.extend_from_slice(&[a[0], a[1], a[2], color[0], color[1], color[2]]);
                 vertices.extend_from_slice(&[b[0], b[1], b[2], color[0], color[1], color[2]]);
             };
+            let fine = [
+                minor[0] * 0.55_f32 + 0.35,
+                minor[1] * 0.55_f32 + 0.35,
+                minor[2] * 0.55_f32 + 0.35,
+            ];
+            let mut fine_cursor = (-half / 5.0).ceil() * 5.0;
+            while fine_cursor < half - 0.01 {
+                line(
+                    [ox - half, 0.0, oz + fine_cursor],
+                    [ox + half, 0.0, oz + fine_cursor],
+                    fine,
+                );
+                line(
+                    [ox + fine_cursor, 0.0, oz - half],
+                    [ox + fine_cursor, 0.0, oz + half],
+                    fine,
+                );
+                fine_cursor += 5.0;
+            }
             let major_every = (GRID_MAJOR_MM / GRID_MINOR_MM).round() as i32;
             let mut cursor = (-half / GRID_MINOR_MM).ceil() * GRID_MINOR_MM;
             while cursor < half - 0.01 {

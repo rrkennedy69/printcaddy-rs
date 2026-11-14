@@ -13,9 +13,9 @@ impl Default for Camera {
     fn default() -> Self {
         Self {
             target: Vec3::ZERO,
-            yaw: 0.85,
-            pitch: 0.72,
-            distance: 420.0,
+            yaw: 0.62,
+            pitch: 0.58,
+            distance: 340.0,
         }
     }
 }

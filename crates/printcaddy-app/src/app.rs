@@ -14,6 +14,7 @@ use printcaddy_core::{
 };
 
 use crate::camera::Camera;
+use crate::chrome;
 use crate::drive;
 use crate::files::{self, Incoming};
 use crate::library::{self, SavedProject};
@@ -106,6 +107,10 @@ pub struct PrintCaddyApp {
     view_keys: [egui::Key; 6],
     rebind: Option<usize>,
     show_shortcuts: bool,
+    icons: crate::icons::IconSet,
+    show_rulers: bool,
+    show_grid: bool,
+    snap_step: f32,
     notice: String,
     theme: ThemeId,
     mobile: bool,
@@ -181,6 +186,10 @@ impl PrintCaddyApp {
             ],
             rebind: None,
             show_shortcuts: false,
+            icons: crate::icons::IconSet::load(&cc.egui_ctx),
+            show_rulers: true,
+            show_grid: true,
+            snap_step: DEFAULT_SNAP_MM,
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
@@ -316,7 +325,7 @@ impl PrintCaddyApp {
 
     fn sketch_uv(&self, rect: Rect, pos: Pos2) -> Option<[f32; 2]> {
         let ray = self.ray_at(rect, pos);
-        let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+        let step = if self.snap { self.snap_step } else { 0.0 };
         if let Some(id) = self.editing_sketch {
             let object = self.doc.object(id)?;
             let def = self.doc.sketch(id)?;
@@ -613,7 +622,7 @@ impl PrintCaddyApp {
                 }
                 let ray = self.ray_at(rect, pos);
                 if let Some(hit) = ray_plane_y(ray, plane_y) {
-                    let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+                    let step = if self.snap { self.snap_step } else { 0.0 };
                     let x = snap_mm(hit.x - grab_x, step);
                     let z = snap_mm(hit.z - grab_z, step);
                     let dx = x - start_x;
@@ -647,7 +656,7 @@ impl PrintCaddyApp {
                     *engaged = true;
                 }
                 let travel = overlay::axis_travel(origin, pos, pivot, axis_tip);
-                let step = if self.snap { DEFAULT_SNAP_MM } else { 0.0 };
+                let step = if self.snap { self.snap_step } else { 0.0 };
                 let delta = overlay::snapped_axis_delta(travel, step);
                 let axis = gizmo.axis() * delta;
                 if let Gesture::Axis { starts, .. } = &self.gesture {
@@ -727,9 +736,9 @@ impl PrintCaddyApp {
                 let mut depth = (hit.z - anchor.z).abs().max(0.4);
                 let mut height = (start_size.y + (origin.y - pos.y) * 0.25).max(0.4);
                 if self.snap {
-                    width = snap_mm(width, DEFAULT_SNAP_MM).max(0.4);
-                    depth = snap_mm(depth, DEFAULT_SNAP_MM).max(0.4);
-                    height = snap_mm(height, DEFAULT_SNAP_MM).max(0.4);
+                    width = snap_mm(width, self.snap_step).max(0.4);
+                    depth = snap_mm(depth, self.snap_step).max(0.4);
+                    height = snap_mm(height, self.snap_step).max(0.4);
                 }
                 let nx = anchor.x + sign_x * width * 0.5;
                 let nz = anchor.z + sign_z * depth * 0.5;
@@ -1279,157 +1288,58 @@ impl eframe::App for PrintCaddyApp {
 
         self.handle_camera_keys(ctx);
 
-        let mut export = false;
-        let mut import = false;
-        let mut undo = false;
-        let mut redo = false;
-        let mut duplicate = false;
-        let mut delete = false;
-
-        egui::TopBottomPanel::top("ribbon").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("PrintCaddy");
-                    ui.label(self.tr("3D editor"));
-                    ui.label(&self.project_name);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut lang = self.lang.clone();
-                        egui::ComboBox::from_id_salt("language")
-                            .selected_text(lang_label(&lang))
-                            .show_ui(ui, |ui| {
-                                for (code, label) in [
-                                    ("en", "EN"),
-                                    ("de", "DE"),
-                                    ("fr", "FR"),
-                                    ("es", "ES"),
-                                ] {
-                                    ui.selectable_value(&mut lang, code.to_string(), label);
-                                }
-                            });
-                        if lang != self.lang {
-                            self.lang = lang;
-                        }
-                        let simple = self.tr("Simple");
-                        ui.checkbox(&mut self.simple, simple);
-                    });
-                });
-                ui.horizontal_wrapped(|ui| {
-                    undo = ui
-                        .add_enabled(self.history.can_undo(), egui::Button::new(self.tr("Undo")))
-                        .clicked();
-                    redo = ui
-                        .add_enabled(self.history.can_redo(), egui::Button::new(self.tr("Redo")))
-                        .clicked();
-                    ui.separator();
-                    duplicate = ui.button(self.tr("Duplicate")).clicked();
-                    delete = ui.button(self.tr("Delete")).clicked();
-                    ui.separator();
-                    if ui.button(self.tr("Shapes")).clicked() {
-                        self.show_shapes = true;
-                    }
-                    ui.separator();
-                    if !self.simple {
-                        if ui.button(self.tr("Join")).clicked() {
-                            self.combine(BooleanOp::Union);
-                        }
-                        if ui.button(self.tr("Subtract")).clicked() {
-                            self.combine(BooleanOp::Subtract);
-                        }
-                        if ui.button(self.tr("Intersect")).clicked() {
-                            self.combine(BooleanOp::Intersect);
-                        }
-                        if ui.button(self.tr("Group")).clicked() {
-                            self.make_group();
-                        }
-                        if ui.button(self.tr("Ungroup")).clicked() {
-                            self.make_ungroup();
-                        }
-                        if ui.button(self.tr("Hole")).clicked() {
-                            self.toggle_hole();
-                        }
-                        ui.separator();
-                        if ui.button(self.tr("Sketch")).clicked() {
-                            self.begin_sketch();
-                        }
-                    }
-                    if ui.button(self.tr("Slice")).clicked() {
-                        self.show_slicer = true;
-                    }
-                    if ui.button(if self.layer_view {
-                        self.tr("Layers on")
-                    } else {
-                        self.tr("Layers")
-                    })
-                    .clicked()
-                    {
-                        self.layer_view = !self.layer_view;
-                        if self.layer_view {
-                            self.layer_z = self.model_top();
-                            self.notice =
-                                "Layer view. The slider hides everything above this height.".into();
-                        } else {
-                            self.notice = "Layer view off. The model is unchanged.".into();
-                        }
-                    }
-                    ui.separator();
-                    import = ui.button(self.tr("Import STL")).clicked();
-                    export = ui.button(self.tr("Export STL")).clicked();
-                    if ui.button(self.tr("Import")).clicked() {
-                        self.show_import = true;
-                    }
-                    if ui.button(self.tr("Export")).clicked() {
-                        self.show_export = true;
-                    }
-                    if ui.button(self.tr("Projects")).clicked() {
-                        self.show_projects = true;
-                    }
-                    if ui.button(self.tr("Settings")).clicked() {
-                        self.show_settings = true;
-                    }
-                    if ui.button(self.tr("Shortcuts")).clicked() {
-                        self.show_shortcuts = true;
-                    }
-                    if ui.button(self.tr("Colour")).clicked() {
-                        self.show_colour = !self.show_colour;
-                    }
-                });
-            });
-
-        egui::SidePanel::left("rail")
-            .exact_width(if self.mobile { 84.0 } else { 72.0 })
-            .resizable(false)
+        let mut header_name = self.project_name.clone();
+        let mut header_state = chrome::HeaderState {
+            name: &mut header_name,
+            sketching: self.sketching,
+            lang: &self.lang,
+        };
+        let mut commands = Vec::new();
+        egui::TopBottomPanel::top("header")
+            .frame(egui::Frame::NONE.fill(chrome::PAGE).inner_margin(egui::Margin::symmetric(12, 6)))
             .show(ctx, |ui| {
-                ui.add_space(8.0);
-                if ui.button(self.tr("Home")).clicked() {
-                    self.camera = Camera::default();
-                    self.notice = "Home view".into();
-                }
-                for (label, face) in [
-                    ("Front", overlay::CubeFace::Front),
-                    ("Back", overlay::CubeFace::Back),
-                    ("Left", overlay::CubeFace::Left),
-                    ("Right", overlay::CubeFace::Right),
-                    ("Top", overlay::CubeFace::Top),
-                    ("Bottom", overlay::CubeFace::Bottom),
-                ] {
-                    if ui.button(self.tr(label)).clicked() {
-                        let (yaw, pitch) = face.yaw_pitch();
-                        self.camera.set_facing(yaw, pitch);
-                    }
+                if let Some(cmd) = chrome::header(ui, &self.icons, &mut header_state) {
+                    commands.push(cmd);
                 }
             });
+        if header_name != self.project_name {
+            self.project_name = header_name;
+        }
+        egui::TopBottomPanel::top("ribbon")
+            .frame(egui::Frame::NONE.fill(chrome::PAGE).inner_margin(egui::Margin::symmetric(8, 2)))
+            .show(ctx, |ui| {
+                let ready = |cmd| self.tool_ready(cmd);
+                if let Some(cmd) = chrome::ribbon_all(ui, &self.icons, &ready) {
+                    commands.push(cmd);
+                }
+            });
+        egui::TopBottomPanel::bottom("footer")
+            .frame(egui::Frame::NONE.fill(chrome::PAGE).inner_margin(egui::Margin::symmetric(12, 4)))
+            .show(ctx, |ui| {
+                if let Some(cmd) = chrome::footer(ui) {
+                    commands.push(cmd);
+                }
+            });
+        for cmd in commands {
+            self.apply_chrome(cmd);
+        }
 
         let show_inspector = self.doc.selection().is_some() || self.show_colour || self.sketching;
         if show_inspector {
             egui::SidePanel::right("inspector")
-                .exact_width(if self.mobile { 320.0 } else { 280.0 })
-                .resizable(false)
+                .exact_width(if self.mobile { 300.0 } else { 280.0 })
+                .frame(
+                    egui::Frame::NONE
+                        .fill(chrome::PAGE)
+                        .inner_margin(egui::Margin::symmetric(10, 8)),
+                )
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if self.sketching {
                             self.sketch_controls(ui);
                         }
                         if self.show_colour || self.doc.selection().is_some() {
-                            ui.label(self.tr("Colour"));
+                            ui.label(egui::RichText::new("Colour").strong().color(chrome::INK));
                             self.colour_picker(ui);
                         }
                         if self.doc.selection().is_some() {
@@ -1441,6 +1351,12 @@ impl eframe::App for PrintCaddyApp {
                                 if ui.button("Fillet box").clicked() {
                                     self.apply_fillet();
                                 }
+                                if ui.button("Hole").clicked() {
+                                    self.toggle_hole();
+                                }
+                                if ui.button("Export STL").clicked() {
+                                    self.export();
+                                }
                                 if ui.button("Edit sketch").clicked() {
                                     self.edit_selected_sketch();
                                 }
@@ -1448,81 +1364,6 @@ impl eframe::App for PrintCaddyApp {
                         }
                     });
                 });
-        }
-
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let snap_label = self.tr("Snap 1 mm");
-                let add_label = self.tr("Add to selection");
-                ui.checkbox(&mut self.snap, snap_label);
-                ui.checkbox(&mut self.add_select, add_label);
-                if ui
-                    .selectable_label(!self.inches, "mm")
-                    .clicked()
-                {
-                    self.inches = false;
-                }
-                if ui.selectable_label(self.inches, "in").clicked() {
-                    self.inches = true;
-                }
-                if ui.button(self.tr("Add plate")).clicked() {
-                    self.history.end();
-                    self.history.begin(&self.doc);
-                    let slot = self.doc.add_plate();
-                    self.history.end();
-                    self.notice = format!("Added plate {slot}.");
-                }
-                ui.label(format!(
-                    "{} {:.0} × {:.0} mm · {} plates",
-                    self.tr("Plate"),
-                    PLATE_SIZE_MM,
-                    PLATE_SIZE_MM,
-                    self.doc.plate_layouts().len()
-                ));
-                ui.label(self.notice.clone());
-                if let Some(err) = self.painter.error() {
-                    ui.colored_label(Color32::from_rgb(180, 40, 40), err);
-                }
-                if ui.button(self.tr("Check for updates")).clicked() {
-                    self.show_updates = true;
-                    self.start_update_check();
-                }
-            });
-        });
-
-        if undo {
-            self.history.undo(&mut self.doc);
-            self.doc.bake_rotations();
-            self.notice = "Undid the last change".into();
-        }
-        if redo {
-            self.history.redo(&mut self.doc);
-            self.doc.bake_rotations();
-            self.notice = "Redid the change".into();
-        }
-        if duplicate {
-            if let Some(id) = self.doc.selection() {
-                self.history.end();
-                self.history.begin(&self.doc);
-                self.doc.duplicate(id);
-                self.history.end();
-                self.notice = "Duplicated the selection".into();
-            }
-        }
-        if delete {
-            if self.doc.selection().is_some() {
-                self.history.end();
-                self.history.begin(&self.doc);
-                self.doc.delete_selected();
-                self.history.end();
-                self.notice = "Deleted the selection".into();
-            }
-        }
-        if import {
-            files::pick_stl(self.incoming.clone());
-        }
-        if export {
-            self.export();
         }
 
         let mut view_rect = Rect::NOTHING;
@@ -1546,12 +1387,16 @@ impl eframe::App for PrintCaddyApp {
                     .iter()
                     .map(|plate| (plate.center_x, plate.center_z))
                     .collect();
-                let grid = std::sync::Arc::new(scene::GridLines::plates(
-                    colors.grid_minor,
-                    colors.grid_major,
-                    colors.grid_border,
-                    &centers,
-                ));
+                let grid = std::sync::Arc::new(if self.show_grid {
+                    scene::GridLines::plates(
+                        colors.grid_minor,
+                        colors.grid_major,
+                        colors.grid_border,
+                        &centers,
+                    )
+                } else {
+                    scene::GridLines { vertices: Vec::new() }
+                });
                 let frame = scene::draw_frame(
                     &self.doc,
                     self.camera.view_proj(aspect),
@@ -1608,7 +1453,41 @@ impl eframe::App for PrintCaddyApp {
                 self.paint_toolpaths(ui.painter(), aspect, rect);
                 let cube = overlay::view_cube_rect(rect);
                 self.cube_hits = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
+                if self.show_rulers {
+                    overlay::paint_rulers(
+                        ui.painter(),
+                        &self.camera,
+                        aspect,
+                        rect,
+                        &centers,
+                        &self.project_name,
+                    );
+                }
             });
+        {
+            let mut rail_cmd = None;
+            let mut snap_cmd = None;
+            if view_rect.width() > 8.0 {
+                egui::Area::new(egui::Id::new("left-rail"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(view_rect.left_top() + egui::vec2(8.0, 140.0))
+                    .show(ctx, |ui| {
+                        rail_cmd = chrome::rail(ui, &self.icons);
+                    });
+                egui::Area::new(egui::Id::new("snap-bar"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(view_rect.right_bottom() + egui::vec2(-230.0, -36.0))
+                    .show(ctx, |ui| {
+                        snap_cmd = chrome::snap_bar(ui, self.snap, self.snap_step, self.inches);
+                    });
+            }
+            if let Some(cmd) = rail_cmd {
+                self.apply_chrome(cmd);
+            }
+            if let Some(cmd) = snap_cmd {
+                self.apply_chrome(cmd);
+            }
+        }
         if ctx.input(|input| input.pointer.any_released()) {
             self.doc.bake_rotations();
             self.history.end();
@@ -1633,6 +1512,103 @@ impl eframe::App for PrintCaddyApp {
 }
 
 impl PrintCaddyApp {
+    fn tool_ready(&self, cmd: chrome::Cmd) -> bool {
+        let selected = self.doc.selected_ids().len();
+        match cmd {
+            chrome::Cmd::Undo => self.history.can_undo(),
+            chrome::Cmd::Redo => self.history.can_redo(),
+            chrome::Cmd::Duplicate | chrome::Cmd::Delete | chrome::Cmd::Fillet => selected >= 1,
+            chrome::Cmd::Group | chrome::Cmd::Intersect | chrome::Cmd::CutOut => selected >= 2,
+            chrome::Cmd::Ungroup => selected >= 1,
+            chrome::Cmd::NotBuilt => false,
+            _ => true,
+        }
+    }
+
+    fn apply_chrome(&mut self, cmd: chrome::Cmd) {
+        match cmd {
+            chrome::Cmd::Undo => {
+                self.history.undo(&mut self.doc);
+                self.doc.bake_rotations();
+                self.notice = "Undid the last change".into();
+            }
+            chrome::Cmd::Redo => {
+                self.history.redo(&mut self.doc);
+                self.doc.bake_rotations();
+                self.notice = "Redid the change".into();
+            }
+            chrome::Cmd::Duplicate => {
+                if let Some(id) = self.doc.selection() {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                    self.doc.duplicate(id);
+                    self.history.end();
+                    self.notice = "Duplicated the selection".into();
+                }
+            }
+            chrome::Cmd::Delete => {
+                if self.doc.selection().is_some() {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                    self.doc.delete_selected();
+                    self.history.end();
+                    self.notice = "Deleted the selection".into();
+                }
+            }
+            chrome::Cmd::Shapes => self.show_shapes = true,
+            chrome::Cmd::Group => self.make_group(),
+            chrome::Cmd::Ungroup => self.make_ungroup(),
+            chrome::Cmd::Intersect => self.combine(BooleanOp::Intersect),
+            chrome::Cmd::CutOut => self.combine(BooleanOp::Subtract),
+            chrome::Cmd::Fillet => self.apply_fillet(),
+            chrome::Cmd::Slice => self.show_slicer = true,
+            chrome::Cmd::Layers => {
+                self.layer_view = !self.layer_view;
+                if self.layer_view {
+                    self.layer_z = self.model_top();
+                }
+            }
+            chrome::Cmd::Import => self.show_import = true,
+            chrome::Cmd::Export => self.show_export = true,
+            chrome::Cmd::AddPlate => {
+                self.history.end();
+                self.history.begin(&self.doc);
+                let slot = self.doc.add_plate();
+                self.history.end();
+                self.notice = format!("Added plate {slot}.");
+            }
+            chrome::Cmd::Settings => self.show_settings = true,
+            chrome::Cmd::Shortcuts => self.show_shortcuts = true,
+            chrome::Cmd::SnapToggle => self.snap = !self.snap,
+            chrome::Cmd::SetSnap(on) => self.snap = on,
+            chrome::Cmd::SetInches(inches) => self.inches = inches,
+            chrome::Cmd::SketchTab => {
+                if !self.sketching {
+                    self.begin_sketch();
+                }
+            }
+            chrome::Cmd::EditorTab => {
+                if self.sketching {
+                    self.cancel_sketch();
+                }
+            }
+            chrome::Cmd::HomeCamera => {
+                self.camera = Camera::default();
+            }
+            chrome::Cmd::Fit => {
+                self.camera.target = glam::Vec3::ZERO;
+                self.camera.distance = 340.0;
+            }
+            chrome::Cmd::ZoomIn => self.camera.zoom_factor(0.8),
+            chrome::Cmd::ZoomOut => self.camera.zoom_factor(1.25),
+            chrome::Cmd::ToggleRulers => self.show_rulers = !self.show_rulers,
+            chrome::Cmd::ToggleGrid => self.show_grid = !self.show_grid,
+            chrome::Cmd::Guide | chrome::Cmd::Bug | chrome::Cmd::NotBuilt => {
+                self.notice = "That tool is not in this build yet.".into();
+            }
+        }
+    }
+
     fn handle_camera_keys(&mut self, ctx: &egui::Context) {
         if ctx.wants_keyboard_input() {
             return;
@@ -1909,12 +1885,24 @@ impl PrintCaddyApp {
             .open(&mut open)
             .default_width(520.0)
             .show(ctx, |ui| {
-                ui.label("Basic solids. Text uses a built-in Latin alphabet.");
+                ui.label(
+                    egui::RichText::new("BASIC SHAPES")
+                        .size(11.0)
+                        .strong()
+                        .color(chrome::MUTED),
+                );
                 ui.horizontal_wrapped(|ui| {
                     for shape in Shape::ALL {
-                        if ui.button(shape.label()).clicked() {
-                            chosen = Some(shape);
-                        }
+                        let key = shape_icon_key(shape);
+                        ui.vertical(|ui| {
+                            ui.set_width(88.0);
+                            if let Some(tex) = self.icons.shapes.get(key) {
+                                ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(64.0, 64.0)));
+                            }
+                            if ui.button(shape.label()).clicked() {
+                                chosen = Some(shape);
+                            }
+                        });
                     }
                 });
             });
@@ -2733,6 +2721,30 @@ impl PrintCaddyApp {
                 .to_string();
             self.notice = self.update_text.clone();
         }
+    }
+}
+
+fn shape_icon_key(shape: Shape) -> &'static str {
+    match shape {
+        Shape::Box => "box",
+        Shape::RoundedBox => "roundedBox",
+        Shape::Cylinder => "cylinder",
+        Shape::Capsule => "slot",
+        Shape::Ellipse => "ellipse",
+        Shape::Polygon => "polygon",
+        Shape::Sphere => "sphere",
+        Shape::Cone => "cone",
+        Shape::Pyramid => "pyramid",
+        Shape::Wedge => "wedge",
+        Shape::RoundRoof => "round-roof",
+        Shape::HalfSphere => "half-sphere",
+        Shape::Paraboloid => "paraboloid",
+        Shape::Torus => "torus",
+        Shape::Tube => "tube",
+        Shape::Star => "star",
+        Shape::Heart => "heart",
+        Shape::Text => "text",
+        Shape::NameTag => "nameTag",
     }
 }
 

@@ -1,3 +1,29 @@
+# Parity
+
+Round B (14 Nov 2026) rebuilds the main editor chrome so a 1440×900 window uses the live app's icon ribbon, header, left rail, grey ruled plate, and bottom bar. Shots: `docs/shots/parity/rust-b-editor.png`, `rust-b-shapes.png`, `rust-b-ipad.png` (Chromium iPad emulation, not a physical iPad). `live-before-editor.png` is the TypeScript editor.
+
+## Round B
+
+| Item | Status |
+| --- | --- |
+| Header: logo, “PrintCaddy”, “Easy 3D CAD for 3D printing”, 3D EDITOR / SKETCH tabs, design name, System, EN | Looks close. The name field is editable. System opens nothing of its own; themes stay in Settings. EN is the label only. |
+| Two-row icon ribbon with HOME, CLIPBOARD, SHAPES, COMBINE, ARRANGE, MODIFY, MANAGE, HELP | Looks close. Icons are the live app's toolbar art. Tools that are not built are grey. |
+| Left rounded rail and the view cube above it | Looks close. The cube is a light cube labelled with the three nearest faces. Rail buttons that are not built are grey. |
+| Grey plate, fine grid, red and green numbered edge ticks, design-name watermark | Looks closer. Ticks run every 10 mm. The watermark is faint and follows the plate. The live edge ruler is still finer and more printed-looking. |
+| Bottom bar: User guide, Bug report, Snap Grid, mm/in, source and license | Looks close. The license line says MIT, which is this port's license. The TypeScript app says AGPL-3.0. |
+| Shape library | The Shapes button opens a window of the solids this port can build, with the live grey shape pictures. The live library's extra shapes are not listed there yet. |
+| Selected-object inspector | Still the right-hand number and colour panel. It is not the live inspector's layout. |
+
+### Ribbon tools that are not built
+
+These are on the ribbon and grey: Home dashboard, History, Copy, Paste, Object list, Hide selected, Bundle, Hull, Loft sketches, Common part, Align, Drop, Lay flat, Align faces, Center, Mirror, Pivot, Pattern, Hole pattern, Face, Split, Flexi joints, Cookie cutter, Chamfer, Hollow, Offset, Delete face, Simplify, Texture, Note, Attachments, To Bambu, AI, Collision, Full screen, Gravity, Search, Guide, Help.
+
+### Rail tools that are not built
+
+Show labels, orthographic view, second view, double-click zoom, hide workplane, place workplane, tape measure, framing square, section view.
+
+Built and clickable: Undo, Redo, Duplicate, Delete, Add shape, Group, Ungroup, Intersect, Cut out, Fillet, Snap to grid, Import, Export, Slice, Layers, Add plate, Settings, Shortcuts, the camera rail (home, fit, zoom, rulers, grid), and the 3D EDITOR / SKETCH tabs.
+
 # Parity round A
 
 Compared on 14 Nov 2026 in desktop Chromium at 1440×900.
