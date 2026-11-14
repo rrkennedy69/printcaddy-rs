@@ -7,7 +7,7 @@ use crate::color::{Color, DEFAULT_MODEL_COLOR};
 use crate::mesh::{box_mesh, cylinder_mesh, Mesh};
 use crate::ray::{ray_aabb, ray_cylinder, Ray};
 use crate::sketch::{build_sketch, seat_sketch, SketchDef, SketchError};
-use crate::solids::{filleted_box, shape_mesh, FilletError, Shape};
+use crate::solids::{filleted_box, shape_mesh_with, FilletError, Shape, ShapeParams};
 
 pub const DEFAULT_BOX: (f32, f32, f32) = (20.0, 20.0, 20.0);
 pub const CYLINDER_RADIUS: f32 = 10.0;
@@ -37,6 +37,8 @@ pub enum ObjectKind {
         width: f32,
         depth: f32,
         height: f32,
+        #[serde(default)]
+        params: ShapeParams,
     },
     Mesh {
         mesh: Mesh,
@@ -118,7 +120,8 @@ impl Object {
                 width,
                 depth,
                 height,
-            } => shape_mesh(*shape, *width, *depth, *height),
+                params,
+            } => shape_mesh_with(*shape, *width, *depth, *height, params),
             ObjectKind::Mesh { mesh } => mesh.clone(),
             ObjectKind::Sketch { def } => build_sketch(def).unwrap_or_else(|_| Mesh {
                 positions: Vec::new(),
@@ -388,6 +391,10 @@ impl Document {
             other => {
                 let (width, depth, height) = other.default_size();
                 let name = self.next_shape_name(other);
+                let mut params = ShapeParams::default();
+                if other == Shape::NameTag {
+                    params.text = "NAME".into();
+                }
                 self.spawn(
                     name,
                     ObjectKind::Primitive {
@@ -395,6 +402,7 @@ impl Document {
                         width,
                         depth,
                         height,
+                        params,
                     },
                 )
             }
@@ -474,6 +482,47 @@ impl Document {
     pub fn set_rotation(&mut self, id: ObjectId, degrees: Vec3) {
         if let Some(object) = self.object_mut(id) {
             object.rotation = degrees;
+        }
+    }
+
+    pub fn set_shape_params(&mut self, id: ObjectId, params: ShapeParams) {
+        let shape = match self.object(id).map(|object| &object.kind) {
+            Some(ObjectKind::Primitive { shape, .. }) => *shape,
+            _ => return,
+        };
+        let Some(object) = self.object_mut(id) else {
+            return;
+        };
+        if let ObjectKind::Primitive { params: slot, .. } = &mut object.kind {
+            *slot = params.clamped(shape);
+            object.revision = object.revision.saturating_add(1);
+        }
+    }
+
+    pub fn set_cylinder_segments(&mut self, id: ObjectId, segments: u32) {
+        let Some(object) = self.object_mut(id) else {
+            return;
+        };
+        if let ObjectKind::Cylinder { segments: slot, .. } = &mut object.kind {
+            *slot = segments.clamp(3, 64);
+            object.revision = object.revision.saturating_add(1);
+        }
+    }
+
+    pub fn set_fillet_radius(&mut self, id: ObjectId, radius: f32) {
+        let Some(object) = self.object_mut(id) else {
+            return;
+        };
+        if let ObjectKind::FilletedBox {
+            width,
+            depth,
+            height,
+            radius: slot,
+        } = &mut object.kind
+        {
+            let limit = (*width).min(*depth).min(*height) * 0.5 - 0.2;
+            *slot = radius.clamp(0.2, limit.max(0.2));
+            object.revision = object.revision.saturating_add(1);
         }
     }
 

@@ -40,9 +40,9 @@ pub fn store(projects: &[SavedProject]) {
 
 pub fn load_settings() -> (String, bool) {
     let Some(raw) = read_key(SETTINGS) else {
-        return ("Dark".into(), false);
+        return ("Light".into(), false);
     };
-    let theme = field(&raw, "theme").unwrap_or_else(|| "Dark".into());
+    let theme = field(&raw, "theme").unwrap_or_else(|| "Light".into());
     let mobile = raw.contains("\"mobile\":true");
     (theme, mobile)
 }

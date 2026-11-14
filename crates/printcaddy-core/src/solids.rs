@@ -31,10 +31,12 @@ pub enum Shape {
     Tube,
     Star,
     Heart,
+    Text,
+    NameTag,
 }
 
 impl Shape {
-    pub const ALL: [Shape; 17] = [
+    pub const ALL: [Shape; 19] = [
         Shape::Box,
         Shape::RoundedBox,
         Shape::Cylinder,
@@ -52,6 +54,8 @@ impl Shape {
         Shape::Tube,
         Shape::Star,
         Shape::Heart,
+        Shape::Text,
+        Shape::NameTag,
     ];
 
     pub fn label(self) -> &'static str {
@@ -73,6 +77,8 @@ impl Shape {
             Shape::Tube => "Tube",
             Shape::Star => "Star",
             Shape::Heart => "Heart",
+            Shape::Text => "Text",
+            Shape::NameTag => "Name tag",
         }
     }
 
@@ -98,20 +104,127 @@ impl Shape {
             Shape::Tube => (20.0, 20.0, 20.0),
             Shape::Star => (40.0, 40.0, 10.0),
             Shape::Heart => (40.0, 40.0, 10.0),
+            Shape::Text => (40.0, 6.0, 12.0),
+            Shape::NameTag => (70.0, 22.0, 4.0),
         }
     }
 }
 
+/// Extra knobs for the solids that have one. Missing fields in an older project
+/// file fall back to the library defaults.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ShapeParams {
+    #[serde(default = "default_polygon_sides")]
+    pub polygon_sides: u32,
+    #[serde(default = "default_sphere_sides")]
+    pub sphere_sides: u32,
+    #[serde(default = "default_corner_radius")]
+    pub corner_radius: f32,
+    #[serde(default = "default_wall")]
+    pub wall: f32,
+    #[serde(default = "default_star_points")]
+    pub star_points: u32,
+    #[serde(default = "default_taper")]
+    pub taper: f32,
+    #[serde(default = "default_text")]
+    pub text: String,
+}
+
+fn default_polygon_sides() -> u32 {
+    6
+}
+fn default_sphere_sides() -> u32 {
+    32
+}
+fn default_corner_radius() -> f32 {
+    5.0
+}
+fn default_wall() -> f32 {
+    4.0
+}
+fn default_star_points() -> u32 {
+    5
+}
+fn default_taper() -> f32 {
+    1.0
+}
+fn default_text() -> String {
+    "TEXT".into()
+}
+
+impl Default for ShapeParams {
+    fn default() -> Self {
+        Self {
+            polygon_sides: default_polygon_sides(),
+            sphere_sides: default_sphere_sides(),
+            corner_radius: default_corner_radius(),
+            wall: default_wall(),
+            star_points: default_star_points(),
+            taper: default_taper(),
+            text: default_text(),
+        }
+    }
+}
+
+impl ShapeParams {
+    pub fn clamped(mut self, shape: Shape) -> Self {
+        self.polygon_sides = self.polygon_sides.clamp(3, 24);
+        self.sphere_sides = self.sphere_sides.clamp(8, 48);
+        self.corner_radius = self.corner_radius.max(0.2);
+        self.wall = self.wall.max(0.2);
+        self.star_points = self.star_points.clamp(3, 12);
+        self.taper = self.taper.clamp(0.25, 1.0);
+        let fallback = match shape {
+            Shape::NameTag => "NAME",
+            _ => "TEXT",
+        };
+        let cleaned: String = self
+            .text
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .take(24)
+            .collect();
+        self.text = if cleaned.trim().is_empty() {
+            fallback.into()
+        } else {
+            cleaned
+        };
+        self
+    }
+}
+
+/// Library defaults. The inspector uses [`shape_mesh_with`] once a knob changes.
 pub fn shape_mesh(shape: Shape, width: f32, depth: f32, height: f32) -> Mesh {
+    shape_mesh_with(shape, width, depth, height, &ShapeParams::default())
+}
+
+pub fn shape_mesh_with(
+    shape: Shape,
+    width: f32,
+    depth: f32,
+    height: f32,
+    params: &ShapeParams,
+) -> Mesh {
+    let params = params.clone().clamped(shape);
     let (width, depth, height) = (width.max(0.2), depth.max(0.2), height.max(0.2));
     match shape {
         Shape::Box => box_mesh(width, depth, height),
-        Shape::RoundedBox => rounded_box(width, depth, height, 5.0),
+        Shape::RoundedBox => rounded_box(width, depth, height, params.corner_radius),
         Shape::Cylinder => elliptical_cylinder(width, depth, height, CYLINDER_SEGMENTS),
         Shape::Ellipse => elliptical_cylinder(width, depth, height, CYLINDER_SEGMENTS),
-        Shape::Capsule => capsule(width, depth, height),
-        Shape::Polygon => extrude(&polygon_points(6, width, depth), height),
-        Shape::Sphere => ellipsoid(width, depth, height, 16, 32, false),
+        Shape::Capsule => capsule(width, depth, height, params.taper),
+        Shape::Polygon => extrude(
+            &polygon_points(params.polygon_sides, width, depth),
+            height,
+        ),
+        Shape::Sphere => ellipsoid(
+            width,
+            depth,
+            height,
+            (params.sphere_sides / 2).max(4),
+            params.sphere_sides,
+            false,
+        ),
         Shape::HalfSphere => ellipsoid(width, depth, height * 2.0, 12, 32, true),
         Shape::Cone => cone(width, depth, height, CYLINDER_SEGMENTS),
         Shape::Pyramid => pyramid(width, depth, height),
@@ -119,9 +232,14 @@ pub fn shape_mesh(shape: Shape, width: f32, depth: f32, height: f32) -> Mesh {
         Shape::RoundRoof => round_roof(width, depth, height),
         Shape::Paraboloid => paraboloid(width, depth, height, 24),
         Shape::Torus => torus(width, depth, height),
-        Shape::Tube => tube(width, depth, height, 4.0),
-        Shape::Star => extrude(&star_points(5, 0.5, width, depth), height),
+        Shape::Tube => tube(width, depth, height, params.wall),
+        Shape::Star => extrude(
+            &star_points(params.star_points, 0.5, width, depth),
+            height,
+        ),
         Shape::Heart => extrude(&heart_points(width, depth), height),
+        Shape::Text => letter_mesh(&params.text, width, depth, height, 0.0),
+        Shape::NameTag => name_tag(width, depth, height, &params.text),
     }
 }
 
@@ -500,14 +618,15 @@ fn elliptical_cylinder(width: f32, depth: f32, height: f32, segments: u32) -> Me
     b.mesh()
 }
 
-fn capsule(width: f32, depth: f32, height: f32) -> Mesh {
+fn capsule(width: f32, depth: f32, height: f32, taper: f32) -> Mesh {
     let (length, thick) = if width >= depth {
         (width, depth)
     } else {
         (depth, width)
     };
     let radius = thick * 0.5;
-    let straight = (length - thick).max(0.0) * 0.5;
+    let small = radius * taper.clamp(0.25, 1.0);
+    let straight = (length - radius - small).max(0.0) * 0.5;
     let mut pts = Vec::new();
     let steps = 10;
     for i in 0..=steps {
@@ -516,7 +635,7 @@ fn capsule(width: f32, depth: f32, height: f32) -> Mesh {
     }
     for i in 0..=steps {
         let a = (i as f32) / (steps as f32) * std::f32::consts::PI;
-        pts.push([-straight - a.sin() * radius, -a.cos() * radius]);
+        pts.push([-straight - a.sin() * small, -a.cos() * small]);
     }
     if width < depth {
         for p in &mut pts {
@@ -765,4 +884,252 @@ fn tube(width: f32, depth: f32, height: f32, wall: f32) -> Mesh {
         b.tri(o10, i00, i10);
     }
     b.mesh()
+}
+
+fn append_mesh(into: &mut Mesh, extra: Mesh) {
+    let base = into.positions.len() as u32;
+    into.positions.extend(extra.positions);
+    into.normals.extend(extra.normals);
+    into.indices
+        .extend(extra.indices.into_iter().map(|index| index + base));
+}
+
+fn empty_mesh() -> Mesh {
+    Mesh {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        indices: Vec::new(),
+    }
+}
+
+/// Raised Latin letters. Each glyph is a 5×7 bitmap, extruded as small boxes.
+fn letter_mesh(text: &str, width: f32, depth: f32, height: f32, y0: f32) -> Mesh {
+    let chars: Vec<char> = text.chars().take(24).collect();
+    if chars.is_empty() || height < 0.05 {
+        return empty_mesh();
+    }
+    let cell = 6.0;
+    let px = (width.max(0.2) * 0.96) / (chars.len() as f32 * cell);
+    let py = height / 7.0;
+    let thick = depth.max(0.3);
+    let mut mesh = empty_mesh();
+    let mut cursor = -width * 0.5 + px * 0.5;
+    for ch in chars {
+        let rows = glyph(ch);
+        for (row, bits) in rows.iter().enumerate() {
+            for col in 0..5 {
+                if bits & (1 << (4 - col)) == 0 {
+                    continue;
+                }
+                let pixel = box_mesh(px * 0.86, thick, py * 0.86);
+                let at = Vec3::new(
+                    cursor + col as f32 * px,
+                    y0 + (6 - row) as f32 * py,
+                    0.0,
+                );
+                append_mesh(&mut mesh, pixel.translated(at));
+            }
+        }
+        cursor += cell * px;
+    }
+    mesh
+}
+
+fn name_tag(width: f32, depth: f32, height: f32, text: &str) -> Mesh {
+    let base_h = (height * 0.62).max(0.4);
+    let hole_r = (depth * 0.16).clamp(1.2, depth * 0.28);
+    let outer = (hole_r + 2.4).min(depth * 0.45);
+    let hole_x = -width * 0.5 + outer + 0.4;
+    let ring = tube(outer * 2.0, outer * 2.0, base_h, outer - hole_r)
+        .translated(Vec3::new(hole_x, 0.0, 0.0));
+    let body_width = (width * 0.5 - hole_x).max(4.0);
+    let body_x = hole_x + body_width * 0.5;
+    let mut base = box_mesh(body_width, depth, base_h).translated(Vec3::new(body_x, 0.0, 0.0));
+    append_mesh(&mut base, ring);
+    let text_width = (body_width - 4.0).max(8.0);
+    let letters = letter_mesh(text, text_width, depth * 0.45, (height - base_h).max(0.6), base_h);
+    append_mesh(&mut base, letters.translated(Vec3::new(body_x, 0.0, 0.0)));
+    base
+}
+
+fn glyph(ch: char) -> [u8; 7] {
+    let ch = match ch {
+        'a'..='z' => ch.to_ascii_uppercase(),
+        other => other,
+    };
+    match ch {
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'B' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        'C' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'F' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+        'G' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
+        'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'I' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'J' => [0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100],
+        'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'M' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+        'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+        'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        'Q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
+        'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'V' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
+        'W' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010],
+        'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+        'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+        'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+        '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        '2' => [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        '3' => [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
+        '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        '5' => [0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110],
+        '6' => [0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110],
+        '-' => [0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000],
+        '.' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
+        ' ' => [0, 0, 0, 0, 0, 0, 0],
+        _ => [0b11111, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11111],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn xz_span_left(mesh: &Mesh) -> f32 {
+        let mut min_z = f32::INFINITY;
+        let mut max_z = f32::NEG_INFINITY;
+        for p in &mesh.positions {
+            if p[0] < -4.0 {
+                min_z = min_z.min(p[2]);
+                max_z = max_z.max(p[2]);
+            }
+        }
+        max_z - min_z
+    }
+
+    #[test]
+    fn polygon_sphere_star_and_tube_follow_their_counts() {
+        let thin = shape_mesh_with(
+            Shape::Polygon,
+            20.0,
+            20.0,
+            10.0,
+            &ShapeParams {
+                polygon_sides: 3,
+                ..ShapeParams::default()
+            },
+        );
+        let wide = shape_mesh_with(
+            Shape::Polygon,
+            20.0,
+            20.0,
+            10.0,
+            &ShapeParams {
+                polygon_sides: 12,
+                ..ShapeParams::default()
+            },
+        );
+        assert!(wide.triangle_count() > thin.triangle_count());
+
+        let coarse = shape_mesh_with(
+            Shape::Sphere,
+            22.0,
+            22.0,
+            22.0,
+            &ShapeParams {
+                sphere_sides: 8,
+                ..ShapeParams::default()
+            },
+        );
+        let fine = shape_mesh_with(
+            Shape::Sphere,
+            22.0,
+            22.0,
+            22.0,
+            &ShapeParams {
+                sphere_sides: 32,
+                ..ShapeParams::default()
+            },
+        );
+        assert!(fine.triangle_count() > coarse.triangle_count());
+
+        let three = shape_mesh_with(
+            Shape::Star,
+            40.0,
+            40.0,
+            10.0,
+            &ShapeParams {
+                star_points: 3,
+                ..ShapeParams::default()
+            },
+        );
+        let eight = shape_mesh_with(
+            Shape::Star,
+            40.0,
+            40.0,
+            10.0,
+            &ShapeParams {
+                star_points: 8,
+                ..ShapeParams::default()
+            },
+        );
+        assert!(eight.triangle_count() > three.triangle_count());
+
+        let open = shape_mesh_with(
+            Shape::Tube,
+            20.0,
+            20.0,
+            20.0,
+            &ShapeParams {
+                wall: 2.0,
+                ..ShapeParams::default()
+            },
+        );
+        let thick = shape_mesh_with(
+            Shape::Tube,
+            20.0,
+            20.0,
+            20.0,
+            &ShapeParams {
+                wall: 7.0,
+                ..ShapeParams::default()
+            },
+        );
+        let inner = |mesh: &Mesh| {
+            mesh.positions
+                .iter()
+                .map(|p| (p[0] * p[0] + p[2] * p[2]).sqrt())
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(inner(&thick) + 1.0 < inner(&open));
+    }
+
+    #[test]
+    fn a_tapered_capsule_is_smaller_at_one_end() {
+        let even = shape_mesh(Shape::Capsule, 40.0, 20.0, 20.0);
+        let mut tapered_params = ShapeParams::default();
+        tapered_params.taper = 0.4;
+        let tapered = shape_mesh_with(Shape::Capsule, 40.0, 20.0, 20.0, &tapered_params);
+        assert!(xz_span_left(&tapered) + 2.0 < xz_span_left(&even));
+    }
+
+    #[test]
+    fn text_and_a_name_tag_build_a_mesh() {
+        let mut params = ShapeParams::default();
+        params.text = "Hi".into();
+        let text = shape_mesh_with(Shape::Text, 40.0, 6.0, 12.0, &params);
+        assert!(text.triangle_count() > 20);
+        let tag = shape_mesh_with(Shape::NameTag, 70.0, 22.0, 4.0, &params);
+        assert!(tag.triangle_count() > text.triangle_count());
+    }
 }

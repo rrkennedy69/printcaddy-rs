@@ -115,6 +115,10 @@ impl Document {
         Ok(())
     }
 
+    pub fn plate_is_locked(&self, slot: u32) -> bool {
+        self.locked_slots.contains(&slot)
+    }
+
     pub fn lock_plate(&mut self, slot: u32, locked: bool) {
         let plates = self.plate_layouts();
         let Some(plate) = plates.iter().copied().find(|plate| plate.slot == slot) else {

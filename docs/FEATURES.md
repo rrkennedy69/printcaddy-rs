@@ -34,7 +34,8 @@ A checked box means the Rust app at <https://rrkennedy69.github.io/printcaddy-rs
 - [x] Dimension lines for the selection’s world width, depth, and height.
 - [x] View cube in the top-right. Click a face to jump there. Drag it to orbit.
 - [x] Multi-select. Shift-click, or Add to selection, toggles a body. A drag moves every selected body together.
-- [ ] Resize handles, the on-arc numeric angle editor, and the protractor wheel stay later.
+- [x] Corner resize handles. A drag changes the footprint, and vertical pointer movement changes the height. The opposite corner stays put.
+- [x] A degree wheel is drawn while a rotation arc is dragged. A typed angle on the arc is still later.
 
 ## Shape library
 
@@ -43,10 +44,10 @@ The lines below are the full tool, including every special parameter. Milestone 
 - [x] Box
 - [x] Rounded box
 - [x] Cylinder
-- [ ] Capsule (slot), including one end smaller
+- [x] Capsule (slot), including one end smaller
 - [x] Ellipse
-- [ ] Polygon prism, 3 to 24 sides
-- [ ] Sphere, with a side-count control
+- [x] Polygon prism, 3 to 24 sides
+- [x] Sphere, with a side-count control
 - [x] Cone
 - [x] Pyramid
 - [x] Wedge
@@ -62,7 +63,7 @@ The lines below are the full tool, including every special parameter. Milestone 
 - [ ] Countersink
 - [ ] Double countersink
 - [ ] Teardrop hole
-- [ ] Text (fill modes, stacked letters, right-to-left Arabic and Hebrew, joining Arabic)
+- [x] Text as a Latin bitmap extrusion. Fill modes, stacked letters, and right-to-left joining are still later.
 - [ ] Thread (rod, socket screw, countersunk, hex head, hex nut, tapped hole as a cutter)
 - [ ] Thread sizes M2–M12, UNC/UNF #4 to 1 inch, Whitworth pipe G1/16–G4, custom diameter and pitch, left-hand, TPI for inch and G, end chamfer
 - [ ] Spring
@@ -75,7 +76,7 @@ The lines below are the full tool, including every special parameter. Milestone 
 - [x] Heart
 - [ ] Crescent
 - [ ] Ruler shape
-- [ ] Name tag (coloured layers, key-ring hole, rounded or chamfered letters)
+- [x] Name tag with raised letters and a hole at one end. Coloured layers and chamfered letters are still later.
 - [ ] Icon tag (SVG, coloured layers, count, "as many as fit")
 - [ ] QR code
 - [ ] My shapes / custom shapes, dragged in from the library, including the shared server store

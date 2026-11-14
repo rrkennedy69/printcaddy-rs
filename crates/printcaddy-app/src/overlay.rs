@@ -137,8 +137,9 @@ pub fn paint_gizmos(
     rect: Rect,
     min: Vec3,
     max: Vec3,
+    unit: f32,
+    suffix: &str,
 ) {
-    let center = (min + max) * 0.5;
     for mark in gizmo_marks(min, max) {
         let Some(from) = project(camera, aspect, rect, mark.from) else {
             continue;
@@ -154,7 +155,53 @@ pub fn paint_gizmos(
             paint_head(painter, from, at, color);
         }
     }
-    paint_dimensions(painter, camera, aspect, rect, min, max, center);
+    paint_dimensions(painter, camera, aspect, rect, min, max, unit, suffix);
+    for index in 0..8 {
+        let Some(at) = project(camera, aspect, rect, corner_world(min, max, index)) else {
+            continue;
+        };
+        painter.rect_filled(
+            Rect::from_center_size(at, Vec2::splat(9.0)),
+            1.5,
+            Color32::WHITE,
+        );
+        painter.rect_stroke(
+            Rect::from_center_size(at, Vec2::splat(9.0)),
+            1.5,
+            Stroke::new(1.4_f32, Color32::from_rgb(32, 40, 52)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+pub fn corner_world(min: Vec3, max: Vec3, index: usize) -> Vec3 {
+    Vec3::new(
+        if index & 1 == 0 { min.x } else { max.x },
+        if index & 2 == 0 { min.y } else { max.y },
+        if index & 4 == 0 { min.z } else { max.z },
+    )
+}
+
+pub fn hit_corner(
+    camera: &Camera,
+    aspect: f32,
+    rect: Rect,
+    min: Vec3,
+    max: Vec3,
+    pointer: Pos2,
+    hit_radius: f32,
+) -> Option<usize> {
+    let mut best: Option<(f32, usize)> = None;
+    for index in 0..8 {
+        let Some(at) = project(camera, aspect, rect, corner_world(min, max, index)) else {
+            continue;
+        };
+        let distance = at.distance(pointer);
+        if distance < hit_radius && best.map(|(so_far, _)| distance < so_far).unwrap_or(true) {
+            best = Some((distance, index));
+        }
+    }
+    best.map(|(_, index)| index)
 }
 
 fn paint_dimensions(
@@ -164,11 +211,14 @@ fn paint_dimensions(
     rect: Rect,
     min: Vec3,
     max: Vec3,
-    _center: Vec3,
+    unit: f32,
+    suffix: &str,
 ) {
-    let width = max.x - min.x;
-    let depth = max.z - min.z;
-    let height = max.y - min.y;
+    let unit = if unit.abs() < 1.0e-6 { 1.0 } else { unit };
+    let width = (max.x - min.x) / unit;
+    let depth = (max.z - min.z) / unit;
+    let height = (max.y - min.y) / unit;
+    let suffix = suffix;
     let y = min.y;
     dimension(
         painter,
@@ -177,7 +227,7 @@ fn paint_dimensions(
         rect,
         Vec3::new(min.x, y, max.z + 8.0),
         Vec3::new(max.x, y, max.z + 8.0),
-        format!("{width:.1}"),
+        format!("{width:.1} {suffix}"),
     );
     dimension(
         painter,
@@ -186,7 +236,7 @@ fn paint_dimensions(
         rect,
         Vec3::new(max.x + 8.0, y, min.z),
         Vec3::new(max.x + 8.0, y, max.z),
-        format!("{depth:.1}"),
+        format!("{depth:.1} {suffix}"),
     );
     dimension(
         painter,
@@ -195,7 +245,7 @@ fn paint_dimensions(
         rect,
         Vec3::new(max.x + 8.0, min.y, max.z),
         Vec3::new(max.x + 8.0, max.y, max.z),
-        format!("{height:.1}"),
+        format!("{height:.1} {suffix}"),
     );
 }
 
@@ -214,15 +264,17 @@ fn dimension(
     ) else {
         return;
     };
-    let ink = Color32::from_rgb(230, 220, 180);
+    let ink = Color32::from_rgb(28, 40, 58);
     painter.line_segment([pa, pb], Stroke::new(1.5_f32, ink));
-    painter.text(
-        pa.lerp(pb, 0.5) + Vec2::new(0.0, -10.0),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(13.0),
-        ink,
+    let font = egui::FontId::proportional(13.0);
+    let galley = painter.layout_no_wrap(label, font, ink);
+    let text_rect = Rect::from_center_size(pa.lerp(pb, 0.5) + Vec2::new(0.0, -12.0), galley.size());
+    painter.rect_filled(
+        text_rect.expand(3.0),
+        3.0,
+        Color32::from_rgba_premultiplied(255, 250, 240, 230),
     );
+    painter.galley(text_rect.min, galley, ink);
 }
 
 fn paint_arc(painter: &egui::Painter, at: Pos2, color: Color32) {
@@ -282,7 +334,7 @@ pub fn hit_gizmo(
 pub fn view_cube_rect(view: Rect) -> Rect {
     let size = 112.0;
     Rect::from_min_size(
-        Pos2::new(view.max.x - size - 16.0, view.min.y + 16.0),
+        Pos2::new(view.min.x + 12.0, view.min.y + 12.0),
         Vec2::splat(size),
     )
 }
@@ -295,6 +347,45 @@ pub enum CubeFace {
     Right,
     Top,
     Bottom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CubeTarget {
+    Face(CubeFace),
+    Edge(CubeFace, CubeFace),
+    Corner(CubeFace, CubeFace, CubeFace),
+}
+
+impl CubeTarget {
+    pub fn yaw_pitch(self) -> (f32, f32) {
+        match self {
+            CubeTarget::Face(face) => face.yaw_pitch(),
+            CubeTarget::Edge(a, b) => blend_views(&[a, b]),
+            CubeTarget::Corner(a, b, c) => blend_views(&[a, b, c]),
+        }
+    }
+}
+
+fn blend_views(faces: &[CubeFace]) -> (f32, f32) {
+    let mut sx = 0.0;
+    let mut sz = 0.0;
+    let mut pitch = 0.0;
+    let mut planar = 0.0;
+    for face in faces {
+        match face {
+            CubeFace::Top => pitch += 0.95,
+            CubeFace::Bottom => pitch -= 0.75,
+            other => {
+                let (yaw, _) = other.yaw_pitch();
+                sx += yaw.sin();
+                sz += yaw.cos();
+                planar += 1.0;
+            }
+        }
+    }
+    let yaw = if planar > 0.0 { sx.atan2(sz) } else { 0.6 };
+    let pitch: f32 = if planar > 0.0 { pitch + 0.28 } else { pitch };
+    (yaw, pitch.clamp(-1.2, 1.25))
 }
 
 impl CubeFace {
@@ -315,7 +406,7 @@ pub fn paint_view_cube(
     painter: &egui::Painter,
     camera: &Camera,
     area: Rect,
-) -> Vec<(CubeFace, Pos2)> {
+) -> Vec<(CubeTarget, Pos2)> {
     let center = area.center();
     let eye = (camera.eye() - camera.target).normalize_or_zero();
     let view = glam::Mat4::look_at_rh(eye * 4.0, Vec3::ZERO, Vec3::Y);
@@ -390,7 +481,7 @@ pub fn paint_view_cube(
             Stroke::new(1.2_f32, Color32::from_rgb(40, 48, 56)),
         ));
         let mid = poly.iter().fold(Pos2::ZERO, |acc, p| acc + p.to_vec2()) / poly.len() as f32;
-        centers.push((face, mid));
+        centers.push((CubeTarget::Face(face), mid));
         let label = match face {
             CubeFace::Front => "F",
             CubeFace::Back => "B",
@@ -407,17 +498,95 @@ pub fn paint_view_cube(
             Color32::from_rgb(30, 36, 42),
         );
     }
+    for index in 0..8 {
+        let faces = mesh_corner_faces(index);
+        centers.push((
+            CubeTarget::Corner(faces[0], faces[1], faces[2]),
+            projected[index],
+        ));
+        painter.circle_filled(projected[index], 3.5, Color32::from_rgb(40, 48, 56));
+    }
+    let edges = [
+        (0, 1),
+        (0, 3),
+        (0, 4),
+        (1, 2),
+        (1, 5),
+        (2, 3),
+        (2, 6),
+        (3, 7),
+        (4, 5),
+        (4, 7),
+        (5, 6),
+        (6, 7),
+    ];
+    for (a, b) in edges {
+        let fa = mesh_corner_faces(a);
+        let fb = mesh_corner_faces(b);
+        let shared: Vec<CubeFace> = fa.into_iter().filter(|face| fb.contains(face)).collect();
+        if shared.len() == 2 {
+            let mid = Pos2::new(
+                (projected[a].x + projected[b].x) * 0.5,
+                (projected[a].y + projected[b].y) * 0.5,
+            );
+            centers.push((CubeTarget::Edge(shared[0], shared[1]), mid));
+        }
+    }
     centers
 }
 
-pub fn hit_cube_face(centers: &[(CubeFace, Pos2)], pointer: Pos2) -> Option<CubeFace> {
-    centers
-        .iter()
-        .filter(|(_, at)| at.distance(pointer) < 22.0)
-        .min_by(|a, b| {
-            a.1.distance(pointer)
-                .partial_cmp(&b.1.distance(pointer))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(face, _)| *face)
+fn mesh_corner_faces(index: usize) -> [CubeFace; 3] {
+    match index {
+        0 => [CubeFace::Left, CubeFace::Bottom, CubeFace::Back],
+        1 => [CubeFace::Right, CubeFace::Bottom, CubeFace::Back],
+        2 => [CubeFace::Right, CubeFace::Top, CubeFace::Back],
+        3 => [CubeFace::Left, CubeFace::Top, CubeFace::Back],
+        4 => [CubeFace::Left, CubeFace::Bottom, CubeFace::Front],
+        5 => [CubeFace::Right, CubeFace::Bottom, CubeFace::Front],
+        6 => [CubeFace::Right, CubeFace::Top, CubeFace::Front],
+        _ => [CubeFace::Left, CubeFace::Top, CubeFace::Front],
+    }
+}
+
+pub fn hit_cube(centers: &[(CubeTarget, Pos2)], pointer: Pos2) -> Option<CubeTarget> {
+    let mut best: Option<(u8, f32, CubeTarget)> = None;
+    for (target, at) in centers {
+        let (rank, limit) = match target {
+            CubeTarget::Corner(_, _, _) => (0, 14.0),
+            CubeTarget::Edge(_, _) => (1, 12.0),
+            CubeTarget::Face(_) => (2, 22.0),
+        };
+        let distance = at.distance(pointer);
+        if distance >= limit {
+            continue;
+        }
+        let better = best
+            .map(|(so_rank, so_far, _)| rank < so_rank || (rank == so_rank && distance < so_far))
+            .unwrap_or(true);
+        if better {
+            best = Some((rank, distance, *target));
+        }
+    }
+    best.map(|(_, _, target)| target)
+}
+
+pub fn paint_protractor(painter: &egui::Painter, pivot: Pos2) {
+    let radius = 72.0;
+    let ink = Color32::from_rgb(36, 44, 58);
+    painter.circle_stroke(pivot, radius, Stroke::new(1.4_f32, ink));
+    for step in 0..24 {
+        let angle = step as f32 / 24.0 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+        let dir = Vec2::new(angle.cos(), angle.sin());
+        let inner = if step % 6 == 0 { radius - 14.0 } else { radius - 7.0 };
+        painter.line_segment([pivot + dir * inner, pivot + dir * radius], Stroke::new(1.2_f32, ink));
+        if step % 6 == 0 {
+            painter.text(
+                pivot + dir * (radius + 14.0),
+                egui::Align2::CENTER_CENTER,
+                format!("{}", step * 15),
+                egui::FontId::proportional(11.0),
+                ink,
+            );
+        }
+    }
 }

@@ -41,7 +41,7 @@ pub use slicer::{
     standard_settings, Adhesion, InfillPattern, MaterialTemps, PathKind, PresetId, SliceError,
     SliceLayer, SliceResult, SliceSettings, Toolpath,
 };
-pub use solids::{filleted_box, FilletError, Shape};
+pub use solids::{filleted_box, shape_mesh, shape_mesh_with, FilletError, Shape, ShapeParams};
 pub use stl::{document_to_stl, import_stl, mesh_from_stl, mesh_to_stl_binary, StlError};
 pub use updates::{build_name, compare_builds, UpdateReport};
 

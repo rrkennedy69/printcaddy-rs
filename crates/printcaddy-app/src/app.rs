@@ -66,6 +66,16 @@ enum Gesture {
         origin: Pos2,
         engaged: bool,
     },
+    Scale {
+        id: ObjectId,
+        index: usize,
+        anchor: glam::Vec3,
+        start_size: glam::Vec3,
+        start_pos: glam::Vec3,
+        origin: Pos2,
+        plane_y: f32,
+        engaged: bool,
+    },
 }
 
 pub struct PrintCaddyApp {
@@ -87,7 +97,15 @@ pub struct PrintCaddyApp {
     editing_sketch: Option<ObjectId>,
     pending_point: Option<[f32; 2]>,
     /// Face centres of the view cube from the last paint, for the next click.
-    cube_faces: Vec<(overlay::CubeFace, Pos2)>,
+    cube_hits: Vec<(overlay::CubeTarget, Pos2)>,
+    show_shapes: bool,
+    show_colour: bool,
+    inches: bool,
+    simple: bool,
+    lang: String,
+    view_keys: [egui::Key; 6],
+    rebind: Option<usize>,
+    show_shortcuts: bool,
     notice: String,
     theme: ThemeId,
     mobile: bool,
@@ -127,7 +145,7 @@ pub struct PrintCaddyApp {
 impl PrintCaddyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (theme_label, mobile) = library::load_settings();
-        let theme = ThemeId::from_label(&theme_label).unwrap_or(ThemeId::Dark);
+        let theme = ThemeId::from_label(&theme_label).unwrap_or(ThemeId::Light);
         theme::apply(&cc.egui_ctx, theme, mobile);
         Self {
             doc: Document::new(),
@@ -147,7 +165,22 @@ impl PrintCaddyApp {
             fillet_radius: 2.0,
             editing_sketch: None,
             pending_point: None,
-            cube_faces: Vec::new(),
+            cube_hits: Vec::new(),
+            show_shapes: false,
+            show_colour: false,
+            inches: false,
+            simple: false,
+            lang: "en".into(),
+            view_keys: [
+                egui::Key::Num1,
+                egui::Key::Num2,
+                egui::Key::Num3,
+                egui::Key::Num4,
+                egui::Key::Num5,
+                egui::Key::Num6,
+            ],
+            rebind: None,
+            show_shortcuts: false,
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
@@ -663,6 +696,51 @@ impl PrintCaddyApp {
                     }
                 }
             }
+            Gesture::Scale {
+                id,
+                index,
+                anchor,
+                start_size,
+                start_pos,
+                origin,
+                plane_y,
+                engaged,
+            } => {
+                let now = pos.distance(origin) > DRAG_SLOP || engaged;
+                if !now {
+                    return;
+                }
+                if !engaged {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                }
+                if let Gesture::Scale { engaged, .. } = &mut self.gesture {
+                    *engaged = true;
+                }
+                let ray = self.ray_at(rect, pos);
+                let Some(hit) = ray_plane_y(ray, plane_y) else {
+                    return;
+                };
+                let sign_x = if index & 1 == 0 { -1.0 } else { 1.0 };
+                let sign_z = if index & 4 == 0 { -1.0 } else { 1.0 };
+                let mut width = (hit.x - anchor.x).abs().max(0.4);
+                let mut depth = (hit.z - anchor.z).abs().max(0.4);
+                let mut height = (start_size.y + (origin.y - pos.y) * 0.25).max(0.4);
+                if self.snap {
+                    width = snap_mm(width, DEFAULT_SNAP_MM).max(0.4);
+                    depth = snap_mm(depth, DEFAULT_SNAP_MM).max(0.4);
+                    height = snap_mm(height, DEFAULT_SNAP_MM).max(0.4);
+                }
+                let nx = anchor.x + sign_x * width * 0.5;
+                let nz = anchor.z + sign_z * depth * 0.5;
+                let ny = if index & 2 == 0 {
+                    (anchor.y - height).max(0.0)
+                } else {
+                    start_pos.y
+                };
+                self.doc.set_size(id, width, depth, height);
+                self.doc.set_position(id, glam::Vec3::new(nx, ny, nz));
+            }
             Gesture::Orbit {
                 last,
                 origin,
@@ -702,6 +780,12 @@ impl PrintCaddyApp {
         let aspect = Self::aspect_of(rect);
         if let Some((min, max)) = self.doc.selection_bounds() {
             let reach = if self.mobile { 30.0 } else { 18.0 };
+            if let Some(index) =
+                overlay::hit_corner(&self.camera, aspect, rect, min, max, pos, reach)
+            {
+                self.start_scale(pos, index, min, max);
+                return;
+            }
             if let Some(gizmo) =
                 overlay::hit_gizmo(&self.camera, aspect, rect, min, max, pos, reach)
             {
@@ -805,13 +889,16 @@ impl PrintCaddyApp {
                 self.doc.bake_rotations();
                 self.notice = "Rotation baked to 0, 0, 0".into();
             }
+            Gesture::Scale { engaged: true, id, .. } => {
+                self.doc.apply_plate_lock(id);
+            }
             Gesture::Cube { .. } => {}
             _ => {}
         }
         if cube_click {
             if let Some(origin) = cube_at {
-                if let Some(face) = overlay::hit_cube_face(&self.cube_faces, origin) {
-                    let (yaw, pitch) = face.yaw_pitch();
+                if let Some(target) = overlay::hit_cube(&self.cube_hits, origin) {
+                    let (yaw, pitch) = target.yaw_pitch();
                     self.camera.set_facing(yaw, pitch);
                     self.notice = "View cube".into();
                 }
@@ -843,6 +930,18 @@ impl PrintCaddyApp {
                 .iter()
                 .map(|(id, pos, rot)| (*id, *pos, Some(*rot)))
                 .collect(),
+            Gesture::Scale {
+                id,
+                start_size,
+                start_pos,
+                engaged: true,
+                ..
+            } => {
+                self.doc.set_size(*id, start_size.x, start_size.z, start_size.y);
+                self.doc.set_position(*id, *start_pos);
+                self.history.cancel();
+                return;
+            }
             _ => return,
         };
         for (id, position, rotation) in places {
@@ -859,6 +958,28 @@ impl PrintCaddyApp {
             }
         }
         self.history.cancel();
+    }
+
+    fn start_scale(&mut self, pos: Pos2, index: usize, min: glam::Vec3, max: glam::Vec3) {
+        let Some(id) = self.doc.selection() else {
+            return;
+        };
+        let Some(object) = self.doc.object(id) else {
+            return;
+        };
+        let (width, depth, height) = object.size();
+        let corner = overlay::corner_world(min, max, index);
+        let anchor = overlay::corner_world(min, max, index ^ 7);
+        self.gesture = Gesture::Scale {
+            id,
+            index,
+            anchor,
+            start_size: glam::Vec3::new(width, height, depth),
+            start_pos: object.position,
+            origin: pos,
+            plane_y: corner.y,
+            engaged: false,
+        };
     }
 
     fn start_gizmo(
@@ -1081,14 +1202,16 @@ impl PrintCaddyApp {
         };
         ui.label(format!("Selected: {}", object.name));
         let (width0, depth0, height0) = object.size();
-        let mut position = object.position;
+        let unit = if self.inches { 25.4 } else { 1.0 };
+        let unit_name = if self.inches { "in" } else { "mm" };
+        let mut position = object.position / unit;
         let mut rotation = object.rotation;
-        let mut width = width0;
-        let mut depth = depth0;
-        let mut height = height0;
+        let mut width = width0 / unit;
+        let mut depth = depth0 / unit;
+        let mut height = height0 / unit;
         let mut pose = false;
         let mut sized = false;
-        ui.label("Position (mm)");
+        ui.label(format!("Position ({unit_name})"));
         pose |= number(ui, "X", &mut position.x);
         pose |= number(ui, "Y", &mut position.y);
         pose |= number(ui, "Z", &mut position.z);
@@ -1096,23 +1219,24 @@ impl PrintCaddyApp {
         pose |= number(ui, "Rot X", &mut rotation.x);
         pose |= number(ui, "Rot Y", &mut rotation.y);
         pose |= number(ui, "Rot Z", &mut rotation.z);
-        ui.label("Size (mm)");
+        ui.label(format!("Size ({unit_name})"));
         sized |= number(ui, "Width", &mut width);
         sized |= number(ui, "Depth", &mut depth);
         sized |= number(ui, "Height", &mut height);
+        self.shape_fields(ui, id, &object);
         if (pose || sized) && !self.history.is_open() {
             self.history.begin(&self.doc);
         }
         if pose {
-            self.doc.set_position(id, position);
+            self.doc.set_position(id, position * unit);
             self.doc.set_rotation(id, rotation);
         }
         if sized
-            && ((width - width0).abs() > 1e-4
-                || (depth - depth0).abs() > 1e-4
-                || (height - height0).abs() > 1e-4)
+            && ((width - width0 / unit).abs() > 1e-4
+                || (depth - depth0 / unit).abs() > 1e-4
+                || (height - height0 / unit).abs() > 1e-4)
         {
-            self.doc.set_size(id, width, depth, height);
+            self.doc.set_size(id, width * unit, depth * unit, height * unit);
         }
     }
 }
@@ -1153,194 +1277,220 @@ impl eframe::App for PrintCaddyApp {
             }
         }
 
+        self.handle_camera_keys(ctx);
+
         let mut export = false;
         let mut import = false;
-        let mut chosen: Option<Shape> = None;
         let mut undo = false;
         let mut redo = false;
         let mut duplicate = false;
         let mut delete = false;
 
-        egui::SidePanel::left("tools")
-            .exact_width(280.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let scroll_height = (ui.available_height() - 36.0).max(120.0);
-                egui::ScrollArea::vertical().max_height(scroll_height).show(ui, |ui| {
-                    ui.add_space(8.0);
+        egui::TopBottomPanel::top("ribbon").show(ctx, |ui| {
+                ui.horizontal(|ui| {
                     ui.heading("PrintCaddy");
-                    ui.horizontal(|ui| {
-                        if ui.button("Projects").clicked() {
-                            self.show_projects = true;
+                    ui.label(self.tr("3D editor"));
+                    ui.label(&self.project_name);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut lang = self.lang.clone();
+                        egui::ComboBox::from_id_salt("language")
+                            .selected_text(lang_label(&lang))
+                            .show_ui(ui, |ui| {
+                                for (code, label) in [
+                                    ("en", "EN"),
+                                    ("de", "DE"),
+                                    ("fr", "FR"),
+                                    ("es", "ES"),
+                                ] {
+                                    ui.selectable_value(&mut lang, code.to_string(), label);
+                                }
+                            });
+                        if lang != self.lang {
+                            self.lang = lang;
                         }
-                        if ui.button("Settings").clicked() {
-                            self.show_settings = true;
-                        }
+                        let simple = self.tr("Simple");
+                        ui.checkbox(&mut self.simple, simple);
                     });
-                    ui.label(format!("Project {}", self.project_name));
-                    ui.label("Colour");
-                    self.colour_picker(ui);
-                    ui.small(format!(
-                        "New bodies stay {}",
-                        printcaddy_core::DEFAULT_MODEL_COLOR.hex_string()
-                    ));
-                    ui.horizontal(|ui| {
-                        undo = ui.add_enabled(self.history.can_undo(), egui::Button::new("Undo")).clicked();
-                        redo = ui.add_enabled(self.history.can_redo(), egui::Button::new("Redo")).clicked();
-                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.small(self.tr("Home"));
+                    undo = ui
+                        .add_enabled(self.history.can_undo(), egui::Button::new(self.tr("Undo")))
+                        .clicked();
+                    redo = ui
+                        .add_enabled(self.history.can_redo(), egui::Button::new(self.tr("Redo")))
+                        .clicked();
                     ui.separator();
-                    ui.label("Shapes");
-                    ui.horizontal_wrapped(|ui| {
-                        for shape in Shape::ALL {
-                            if ui.button(shape.label()).clicked() {
-                                chosen = Some(shape);
-                            }
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        import = ui.button("Import STL").clicked();
-                        export = ui.button("Export STL").clicked();
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Import file").clicked() {
-                            self.show_import = true;
-                        }
-                        if ui.button("Export file").clicked() {
-                            self.show_export = true;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        duplicate = ui.button("Duplicate").clicked();
-                        delete = ui.button("Delete").clicked();
-                    });
-                    ui.checkbox(&mut self.snap, "Snap to 1 mm grid");
-                    ui.checkbox(&mut self.add_select, "Add to selection");
+                    duplicate = ui.button(self.tr("Duplicate")).clicked();
+                    delete = ui.button(self.tr("Delete")).clicked();
                     ui.separator();
-                    ui.label("Sketch");
-                    if self.sketching {
-                        ui.horizontal(|ui| {
-                            if ui.selectable_label(!self.draw_path, "Profile").clicked() {
-                                self.draw_path = false;
-                            }
-                            if ui.selectable_label(self.draw_path, "Path").clicked() {
-                                self.draw_path = true;
-                            }
-                        });
-                        number(ui, "Height", &mut self.sketch_height);
-                        number(ui, "Angle", &mut self.sketch_angle);
-                        ui.horizontal(|ui| {
-                            if ui.button("Extrude").clicked() {
-                                self.finish_sketch(SketchOp::Extrude);
-                            }
-                            if ui.button("Revolve").clicked() {
-                                self.finish_sketch(SketchOp::Revolve);
-                            }
-                            if ui.button("Sweep").clicked() {
-                                self.finish_sketch(SketchOp::Sweep);
-                            }
-                        });
-                        if ui.button("Cancel").clicked() {
-                            self.cancel_sketch();
-                        }
-                        ui.small(format!(
-                            "Profile {} points, path {} points. Click the plate to add one. Drag to orbit.",
-                            self.profile.len(),
-                            self.sketch_path.len()
-                        ));
-                    } else {
-                        ui.horizontal(|ui| {
-                            if ui.button("Draw sketch").clicked() {
-                                self.begin_sketch();
-                            }
-                            if ui.button("Edit sketch").clicked() {
-                                self.edit_selected_sketch();
-                            }
-                        });
+                    if ui.button(self.tr("Shapes")).clicked() {
+                        self.show_shapes = true;
                     }
                     ui.separator();
-                    ui.label("Combine");
-                    ui.horizontal(|ui| {
-                        if ui.button("Join").clicked() {
+                    if !self.simple {
+                        if ui.button(self.tr("Join")).clicked() {
                             self.combine(BooleanOp::Union);
                         }
-                        if ui.button("Subtract").clicked() {
+                        if ui.button(self.tr("Subtract")).clicked() {
                             self.combine(BooleanOp::Subtract);
                         }
-                        if ui.button("Intersect").clicked() {
+                        if ui.button(self.tr("Intersect")).clicked() {
                             self.combine(BooleanOp::Intersect);
                         }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Group").clicked() {
+                        if ui.button(self.tr("Group")).clicked() {
                             self.make_group();
                         }
-                        if ui.button("Ungroup").clicked() {
+                        if ui.button(self.tr("Ungroup")).clicked() {
                             self.make_ungroup();
                         }
-                        if ui.button("Hole").clicked() {
+                        if ui.button(self.tr("Hole")).clicked() {
                             self.toggle_hole();
                         }
-                    });
-                    number(ui, "Fillet", &mut self.fillet_radius);
-                    if ui.button("Fillet box").clicked() {
-                        self.apply_fillet();
+                        ui.separator();
+                        if ui.button(self.tr("Sketch")).clicked() {
+                            self.begin_sketch();
+                        }
+                    }
+                    if ui.button(self.tr("Slice")).clicked() {
+                        self.show_slicer = true;
+                    }
+                    if ui.button(if self.layer_view {
+                        self.tr("Layers on")
+                    } else {
+                        self.tr("Layers")
+                    })
+                    .clicked()
+                    {
+                        self.layer_view = !self.layer_view;
+                        if self.layer_view {
+                            self.layer_z = self.model_top();
+                            self.notice =
+                                "Layer view. The slider hides everything above this height.".into();
+                        } else {
+                            self.notice = "Layer view off. The model is unchanged.".into();
+                        }
                     }
                     ui.separator();
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
-                    ui.painter().rect_filled(
-                        rect,
-                        3.0,
-                        Color32::from_rgb(DEFAULT_MODEL_COLOR.r, DEFAULT_MODEL_COLOR.g, DEFAULT_MODEL_COLOR.b),
-                    );
-                    ui.label(format!("Default colour {}", DEFAULT_MODEL_COLOR.hex_string()));
-                    ui.label(format!(
-                        "Plate {PLATE_SIZE_MM:.0} × {PLATE_SIZE_MM:.0} mm · {} plates",
-                        self.doc.plate_layouts().len()
-                    ));
-                    ui.horizontal(|ui| {
-                        if ui.button("Add plate").clicked() {
-                            self.history.end();
-                            self.history.begin(&self.doc);
-                            let slot = self.doc.add_plate();
-                            self.history.end();
-                            self.notice = format!("Added plate {slot}.");
-                        }
-                        if ui.button("Delete plate").clicked() {
-                            self.delete_active_plate();
-                        }
-                        if ui.button("Lock plate").clicked() {
-                            self.toggle_active_plate_lock();
-                        }
-                    });
-                    self.properties(ui);
-                    ui.separator();
-                    ui.label(self.notice.clone());
-                    if let Some(err) = self.painter.error() {
-                        ui.colored_label(Color32::LIGHT_RED, err);
+                    import = ui.button(self.tr("Import STL")).clicked();
+                    export = ui.button(self.tr("Export STL")).clicked();
+                    if ui.button(self.tr("Import")).clicked() {
+                        self.show_import = true;
                     }
-                    ui.add_space(8.0);
-                    ui.small("Drag empty space to orbit, drag a shape to move it. Right or middle button pans. Wheel or pinch zooms.");
-                    ui.small("Two fingers pan and pinch. A second finger puts a move back. Ctrl+Z undoes.");
+                    if ui.button(self.tr("Export")).clicked() {
+                        self.show_export = true;
+                    }
+                    if ui.button(self.tr("Projects")).clicked() {
+                        self.show_projects = true;
+                    }
+                    if ui.button(self.tr("Settings")).clicked() {
+                        self.show_settings = true;
+                    }
+                    if ui.button(self.tr("Shortcuts")).clicked() {
+                        self.show_shortcuts = true;
+                    }
+                    if ui.button(self.tr("Colour")).clicked() {
+                        self.show_colour = !self.show_colour;
+                    }
                 });
-                if ui.button("Check for updates").clicked() {
+            });
+
+        egui::SidePanel::left("rail")
+            .exact_width(if self.mobile { 84.0 } else { 72.0 })
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                if ui.button(self.tr("Home")).clicked() {
+                    self.camera = Camera::default();
+                    self.notice = "Home view".into();
+                }
+                for (label, face) in [
+                    ("Front", overlay::CubeFace::Front),
+                    ("Back", overlay::CubeFace::Back),
+                    ("Left", overlay::CubeFace::Left),
+                    ("Right", overlay::CubeFace::Right),
+                    ("Top", overlay::CubeFace::Top),
+                    ("Bottom", overlay::CubeFace::Bottom),
+                ] {
+                    if ui.button(self.tr(label)).clicked() {
+                        let (yaw, pitch) = face.yaw_pitch();
+                        self.camera.set_facing(yaw, pitch);
+                    }
+                }
+            });
+
+        let show_inspector = self.doc.selection().is_some() || self.show_colour || self.sketching;
+        if show_inspector {
+            egui::SidePanel::right("inspector")
+                .exact_width(if self.mobile { 320.0 } else { 280.0 })
+                .resizable(false)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if self.sketching {
+                            self.sketch_controls(ui);
+                        }
+                        if self.show_colour || self.doc.selection().is_some() {
+                            ui.label(self.tr("Colour"));
+                            self.colour_picker(ui);
+                        }
+                        if self.doc.selection().is_some() {
+                            ui.separator();
+                            self.properties(ui);
+                            if !self.simple {
+                                ui.separator();
+                                number(ui, "Fillet", &mut self.fillet_radius);
+                                if ui.button("Fillet box").clicked() {
+                                    self.apply_fillet();
+                                }
+                                if ui.button("Edit sketch").clicked() {
+                                    self.edit_selected_sketch();
+                                }
+                            }
+                        }
+                    });
+                });
+        }
+
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let snap_label = self.tr("Snap 1 mm");
+                let add_label = self.tr("Add to selection");
+                ui.checkbox(&mut self.snap, snap_label);
+                ui.checkbox(&mut self.add_select, add_label);
+                if ui
+                    .selectable_label(!self.inches, "mm")
+                    .clicked()
+                {
+                    self.inches = false;
+                }
+                if ui.selectable_label(self.inches, "in").clicked() {
+                    self.inches = true;
+                }
+                if ui.button(self.tr("Add plate")).clicked() {
+                    self.history.end();
+                    self.history.begin(&self.doc);
+                    let slot = self.doc.add_plate();
+                    self.history.end();
+                    self.notice = format!("Added plate {slot}.");
+                }
+                ui.label(format!(
+                    "{} {:.0} × {:.0} mm · {} plates",
+                    self.tr("Plate"),
+                    PLATE_SIZE_MM,
+                    PLATE_SIZE_MM,
+                    self.doc.plate_layouts().len()
+                ));
+                ui.label(self.notice.clone());
+                if let Some(err) = self.painter.error() {
+                    ui.colored_label(Color32::from_rgb(180, 40, 40), err);
+                }
+                if ui.button(self.tr("Check for updates")).clicked() {
                     self.show_updates = true;
                     self.start_update_check();
                 }
             });
+        });
 
-        if let Some(shape) = chosen {
-            self.history.end();
-            self.history.begin(&self.doc);
-            let id = self.doc.add_shape(shape);
-            let name = self
-                .doc
-                .object(id)
-                .map(|o| o.name.clone())
-                .unwrap_or_else(|| shape.label().into());
-            self.history.end();
-            self.notice = format!("Added {name}");
-        }
         if undo {
             self.history.undo(&mut self.doc);
             self.doc.bake_rotations();
@@ -1380,26 +1530,6 @@ impl eframe::App for PrintCaddyApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Slice").clicked() {
-                        self.show_slicer = true;
-                    }
-                    let layers = if self.layer_view {
-                        "Layers on"
-                    } else {
-                        "Layers"
-                    };
-                    if ui.button(layers).clicked() {
-                        self.layer_view = !self.layer_view;
-                        if self.layer_view {
-                            self.layer_z = self.model_top();
-                            self.notice =
-                                "Layer view. The slider hides everything above this height.".into();
-                        } else {
-                            self.notice = "Layer view off. The model is unchanged.".into();
-                        }
-                    }
-                });
                 let available = ui.available_size();
                 let (rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
                 view_rect = rect;
@@ -1429,25 +1559,65 @@ impl eframe::App for PrintCaddyApp {
                     &mut self.meshes,
                     grid,
                     colors.viewport,
+                    colors.plate,
                     colors.xray,
                     if self.layer_view { self.layer_z } else { 1.0e6 },
                 );
                 let callback = self.painter.callback(frame);
                 ui.painter().add(egui::PaintCallback { rect, callback });
+                let (unit, suffix) = if self.inches {
+                    (25.4, "in")
+                } else {
+                    (1.0, "mm")
+                };
                 if let Some((min, max)) = self.doc.selection_bounds() {
-                    overlay::paint_gizmos(ui.painter(), &self.camera, aspect, rect, min, max);
+                    overlay::paint_gizmos(
+                        ui.painter(),
+                        &self.camera,
+                        aspect,
+                        rect,
+                        min,
+                        max,
+                        unit,
+                        suffix,
+                    );
+                    let name_at = glam::Vec3::new((min.x + max.x) * 0.5, max.y + 6.0, (min.z + max.z) * 0.5);
+                    if let Some(screen) = overlay::project(&self.camera, aspect, rect, name_at) {
+                        if let Some(id) = self.doc.selection() {
+                            if let Some(object) = self.doc.object(id) {
+                                ui.painter().text(
+                                    screen,
+                                    egui::Align2::CENTER_BOTTOM,
+                                    &object.name,
+                                    egui::FontId::proportional(14.0),
+                                    Color32::from_rgb(28, 36, 48),
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Gesture::Turn {
+                    pivot_screen,
+                    engaged: true,
+                    ..
+                } = &self.gesture
+                {
+                    overlay::paint_protractor(ui.painter(), *pivot_screen);
                 }
                 self.paint_sketch(ui.painter(), aspect, rect);
                 self.paint_plate_numbers(ui.painter(), aspect, rect);
                 self.paint_toolpaths(ui.painter(), aspect, rect);
                 let cube = overlay::view_cube_rect(rect);
-                self.cube_faces = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
+                self.cube_hits = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
             });
         if ctx.input(|input| input.pointer.any_released()) {
             self.doc.bake_rotations();
             self.history.end();
         }
         self.settings_window(ctx);
+        self.shapes_window(ctx);
+        self.shortcuts_window(ctx);
+        self.plate_tiles(ctx, view_rect);
         self.projects_window(ctx);
         self.updates_window(ctx);
         self.exchange_windows(ctx);
@@ -1464,6 +1634,411 @@ impl eframe::App for PrintCaddyApp {
 }
 
 impl PrintCaddyApp {
+    fn handle_camera_keys(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+        let pressed = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !modifiers.command && !modifiers.alt && !modifiers.ctrl => Some(*key),
+                _ => None,
+            })
+        });
+        let Some(key) = pressed else {
+            return;
+        };
+        if let Some(slot) = self.rebind {
+            self.view_keys[slot] = key;
+            self.rebind = None;
+            self.notice = format!("Camera key {} is now {key:?}", slot + 1);
+            return;
+        }
+        let faces = [
+            overlay::CubeFace::Front,
+            overlay::CubeFace::Back,
+            overlay::CubeFace::Left,
+            overlay::CubeFace::Right,
+            overlay::CubeFace::Top,
+            overlay::CubeFace::Bottom,
+        ];
+        if let Some(slot) = self.view_keys.iter().position(|view| *view == key) {
+            let (yaw, pitch) = faces[slot].yaw_pitch();
+            self.camera.set_facing(yaw, pitch);
+            self.notice = format!("Camera {}", slot + 1);
+        }
+    }
+
+    fn tr(&self, english: &str) -> String {
+        let table = match self.lang.as_str() {
+            "de" => &[
+                ("3D editor", "3D-Editor"),
+                ("Simple", "Einfach"),
+                ("Home", "Start"),
+                ("Undo", "Rückgängig"),
+                ("Redo", "Wiederholen"),
+                ("Duplicate", "Duplizieren"),
+                ("Delete", "Löschen"),
+                ("Shapes", "Formen"),
+                ("Join", "Vereinigen"),
+                ("Subtract", "Abziehen"),
+                ("Intersect", "Schnitt"),
+                ("Group", "Gruppe"),
+                ("Ungroup", "Auflösen"),
+                ("Hole", "Loch"),
+                ("Sketch", "Skizze"),
+                ("Slice", "Schneiden"),
+                ("Layers", "Schichten"),
+                ("Layers on", "Schichten an"),
+                ("Import STL", "STL importieren"),
+                ("Export STL", "STL exportieren"),
+                ("Import", "Import"),
+                ("Export", "Export"),
+                ("Projects", "Projekte"),
+                ("Settings", "Einstellungen"),
+                ("Shortcuts", "Kürzel"),
+                ("Colour", "Farbe"),
+                ("Front", "Vorne"),
+                ("Back", "Hinten"),
+                ("Left", "Links"),
+                ("Right", "Rechts"),
+                ("Top", "Oben"),
+                ("Bottom", "Unten"),
+                ("Snap 1 mm", "1-mm-Raster"),
+                ("Add to selection", "Zur Auswahl"),
+                ("Add plate", "Platte hinzu"),
+                ("Plate", "Platte"),
+                ("Check for updates", "Nach Updates suchen"),
+            ][..],
+            "fr" => &[
+                ("3D editor", "Éditeur 3D"),
+                ("Simple", "Simple"),
+                ("Home", "Accueil"),
+                ("Undo", "Annuler"),
+                ("Redo", "Rétablir"),
+                ("Duplicate", "Dupliquer"),
+                ("Delete", "Supprimer"),
+                ("Shapes", "Formes"),
+                ("Join", "Union"),
+                ("Subtract", "Soustraire"),
+                ("Intersect", "Intersection"),
+                ("Group", "Groupe"),
+                ("Ungroup", "Dissocier"),
+                ("Hole", "Trou"),
+                ("Sketch", "Esquisse"),
+                ("Slice", "Trancher"),
+                ("Layers", "Couches"),
+                ("Layers on", "Couches actives"),
+                ("Import STL", "Importer STL"),
+                ("Export STL", "Exporter STL"),
+                ("Import", "Importer"),
+                ("Export", "Exporter"),
+                ("Projects", "Projets"),
+                ("Settings", "Réglages"),
+                ("Shortcuts", "Raccourcis"),
+                ("Colour", "Couleur"),
+                ("Front", "Face"),
+                ("Back", "Dos"),
+                ("Left", "Gauche"),
+                ("Right", "Droite"),
+                ("Top", "Dessus"),
+                ("Bottom", "Dessous"),
+                ("Snap 1 mm", "Pas de 1 mm"),
+                ("Add to selection", "Ajouter"),
+                ("Add plate", "Ajouter un plateau"),
+                ("Plate", "Plateau"),
+                ("Check for updates", "Chercher des mises à jour"),
+            ][..],
+            "es" => &[
+                ("3D editor", "Editor 3D"),
+                ("Simple", "Simple"),
+                ("Home", "Inicio"),
+                ("Undo", "Deshacer"),
+                ("Redo", "Rehacer"),
+                ("Duplicate", "Duplicar"),
+                ("Delete", "Eliminar"),
+                ("Shapes", "Formas"),
+                ("Join", "Unir"),
+                ("Subtract", "Restar"),
+                ("Intersect", "Intersecar"),
+                ("Group", "Grupo"),
+                ("Ungroup", "Desagrupar"),
+                ("Hole", "Agujero"),
+                ("Sketch", "Boceto"),
+                ("Slice", "Laminar"),
+                ("Layers", "Capas"),
+                ("Layers on", "Capas activas"),
+                ("Import STL", "Importar STL"),
+                ("Export STL", "Exportar STL"),
+                ("Import", "Importar"),
+                ("Export", "Exportar"),
+                ("Projects", "Proyectos"),
+                ("Settings", "Ajustes"),
+                ("Shortcuts", "Atajos"),
+                ("Colour", "Color"),
+                ("Front", "Frente"),
+                ("Back", "Atrás"),
+                ("Left", "Izquierda"),
+                ("Right", "Derecha"),
+                ("Top", "Arriba"),
+                ("Bottom", "Abajo"),
+                ("Snap 1 mm", "Rejilla de 1 mm"),
+                ("Add to selection", "Añadir"),
+                ("Add plate", "Añadir placa"),
+                ("Plate", "Placa"),
+                ("Check for updates", "Buscar actualizaciones"),
+            ][..],
+            _ => &[][..],
+        };
+        table
+            .iter()
+            .find(|(key, _)| *key == english)
+            .map(|(_, value)| (*value).to_string())
+            .unwrap_or_else(|| english.to_string())
+    }
+
+    fn sketch_controls(&mut self, ui: &mut egui::Ui) {
+        ui.label("Sketch");
+        ui.horizontal(|ui| {
+            if ui.selectable_label(!self.draw_path, "Profile").clicked() {
+                self.draw_path = false;
+            }
+            if ui.selectable_label(self.draw_path, "Path").clicked() {
+                self.draw_path = true;
+            }
+        });
+        number(ui, "Height", &mut self.sketch_height);
+        number(ui, "Angle", &mut self.sketch_angle);
+        ui.horizontal(|ui| {
+            if ui.button("Extrude").clicked() {
+                self.finish_sketch(SketchOp::Extrude);
+            }
+            if ui.button("Revolve").clicked() {
+                self.finish_sketch(SketchOp::Revolve);
+            }
+            if ui.button("Sweep").clicked() {
+                self.finish_sketch(SketchOp::Sweep);
+            }
+        });
+        if ui.button("Cancel").clicked() {
+            self.cancel_sketch();
+        }
+        ui.small(format!(
+            "Profile {} points, path {} points. Click the plate to add one. Drag to orbit.",
+            self.profile.len(),
+            self.sketch_path.len()
+        ));
+    }
+
+    fn shape_fields(&mut self, ui: &mut egui::Ui, id: ObjectId, object: &printcaddy_core::Object) {
+        use printcaddy_core::{ObjectKind, Shape};
+        match &object.kind {
+            ObjectKind::Primitive { shape, params, .. } => {
+                let mut next = params.clone();
+                let mut changed = false;
+                match shape {
+                    Shape::Polygon => {
+                        let mut sides = next.polygon_sides as f32;
+                        changed |= number(ui, "Sides", &mut sides);
+                        next.polygon_sides = sides.round() as u32;
+                    }
+                    Shape::Sphere => {
+                        let mut sides = next.sphere_sides as f32;
+                        changed |= number(ui, "Sides", &mut sides);
+                        next.sphere_sides = sides.round() as u32;
+                    }
+                    Shape::RoundedBox => {
+                        changed |= number(ui, "Radius", &mut next.corner_radius);
+                    }
+                    Shape::Tube => {
+                        changed |= number(ui, "Wall", &mut next.wall);
+                    }
+                    Shape::Star => {
+                        let mut points = next.star_points as f32;
+                        changed |= number(ui, "Points", &mut points);
+                        next.star_points = points.round() as u32;
+                    }
+                    Shape::Capsule => {
+                        changed |= number(ui, "Taper", &mut next.taper);
+                    }
+                    Shape::Text | Shape::NameTag => {
+                        ui.label("Text");
+                        changed |= ui.text_edit_singleline(&mut next.text).changed();
+                    }
+                    _ => {}
+                }
+                if changed {
+                    if !self.history.is_open() {
+                        self.history.begin(&self.doc);
+                    }
+                    self.doc.set_shape_params(id, next);
+                }
+            }
+            ObjectKind::Cylinder { segments, .. } => {
+                let mut count = *segments as f32;
+                if number(ui, "Sides", &mut count) {
+                    if !self.history.is_open() {
+                        self.history.begin(&self.doc);
+                    }
+                    self.doc.set_cylinder_segments(id, count.round() as u32);
+                }
+            }
+            ObjectKind::FilletedBox { radius, .. } => {
+                let mut radius = *radius;
+                if number(ui, "Radius", &mut radius) {
+                    if !self.history.is_open() {
+                        self.history.begin(&self.doc);
+                    }
+                    self.doc.set_fillet_radius(id, radius);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn shapes_window(&mut self, ctx: &egui::Context) {
+        if !self.show_shapes {
+            return;
+        }
+        let mut open = true;
+        let mut chosen = None;
+        egui::Window::new(self.tr("Shapes"))
+            .open(&mut open)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.label("Basic solids. Text uses a built-in Latin alphabet.");
+                ui.horizontal_wrapped(|ui| {
+                    for shape in Shape::ALL {
+                        if ui.button(shape.label()).clicked() {
+                            chosen = Some(shape);
+                        }
+                    }
+                });
+            });
+        if let Some(shape) = chosen {
+            self.history.end();
+            self.history.begin(&self.doc);
+            let id = self.doc.add_shape(shape);
+            let name = self
+                .doc
+                .object(id)
+                .map(|object| object.name.clone())
+                .unwrap_or_else(|| shape.label().into());
+            self.history.end();
+            self.notice = format!("Added {name}");
+            self.show_shapes = false;
+        } else {
+            self.show_shapes = open;
+        }
+    }
+
+    fn shortcuts_window(&mut self, ctx: &egui::Context) {
+        if !self.show_shortcuts {
+            return;
+        }
+        let mut open = true;
+        let mut rebind = self.rebind;
+        let keys = self.view_keys;
+        egui::Window::new(self.tr("Shortcuts"))
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Delete removes the selection.");
+                ui.label("Click a camera key, then press the new key.");
+                let names = ["Front", "Back", "Left", "Right", "Top", "Bottom"];
+                for (slot, name) in names.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let label = if rebind == Some(slot) {
+                            format!("{name}: press a key")
+                        } else {
+                            format!("{name}: {}", key_name(keys[slot]))
+                        };
+                        if ui.button(label).clicked() {
+                            rebind = Some(slot);
+                        }
+                    });
+                }
+            });
+        self.rebind = rebind;
+        self.show_shortcuts = open;
+    }
+
+    fn plate_tiles(&mut self, ctx: &egui::Context, rect: Rect) {
+        if rect.width() < 8.0 {
+            return;
+        }
+        let aspect = Self::aspect_of(rect);
+        let tiles: Vec<_> = self
+            .doc
+            .plate_layouts()
+            .iter()
+            .map(|plate| {
+                let at = glam::Vec3::new(
+                    plate.center_x - PLATE_SIZE_MM * 0.5 + 28.0,
+                    0.6,
+                    plate.center_z - PLATE_SIZE_MM * 0.5 + 18.0,
+                );
+                (
+                    plate.slot,
+                    plate.number,
+                    overlay::project(&self.camera, aspect, rect, at),
+                )
+            })
+            .collect();
+        let mut lock_slot = None;
+        let mut delete_slot = None;
+        for (slot, number, screen) in tiles {
+            let Some(screen) = screen else {
+                continue;
+            };
+            let locked = self.doc.plate_is_locked(slot);
+            egui::Area::new(egui::Id::new(("plate-tile", slot)))
+                .order(egui::Order::Foreground)
+                .fixed_pos(screen)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{number:02}"));
+                            if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+                                lock_slot = Some((slot, !locked));
+                            }
+                            if slot != 0 && ui.button("Delete").clicked() {
+                                delete_slot = Some(slot);
+                            }
+                        });
+                    });
+                });
+        }
+        if let Some((slot, locked)) = lock_slot {
+            self.history.end();
+            self.history.begin(&self.doc);
+            self.doc.lock_plate(slot, locked);
+            self.history.end();
+            self.notice = if locked {
+                "Locked the plate.".into()
+            } else {
+                "Unlocked the plate.".into()
+            };
+        }
+        if let Some(slot) = delete_slot {
+            self.history.end();
+            self.history.begin(&self.doc);
+            match self.doc.delete_plate(slot) {
+                Ok(()) => {
+                    self.history.end();
+                    self.notice = "Deleted the plate. Its bodies moved beside the grid.".into();
+                }
+                Err(err) => {
+                    self.history.cancel();
+                    self.notice = err;
+                }
+            }
+        }
+    }
+
     fn exchange_windows(&mut self, ctx: &egui::Context) {
         if self.show_import {
             let mut open = true;
@@ -2215,6 +2790,19 @@ impl PrintCaddyApp {
             self.notice = self.update_text.clone();
         }
     }
+}
+
+fn lang_label(code: &str) -> &'static str {
+    match code {
+        "de" => "DE",
+        "fr" => "FR",
+        "es" => "ES",
+        _ => "EN",
+    }
+}
+
+fn key_name(key: egui::Key) -> &'static str {
+    key.name()
 }
 
 fn number(ui: &mut egui::Ui, label: &str, value: &mut f32) -> bool {

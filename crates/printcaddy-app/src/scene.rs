@@ -4,6 +4,10 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 use printcaddy_core::{Document, Object, GRID_MAJOR_MM, GRID_MINOR_MM, PLATE_SIZE_MM};
 
+/// Mesh ids at or above this value are the filled beds. The painter draws them
+/// before the grid lines so the lines stay on top.
+pub const PLATE_MESH_ID: u64 = 0xFFFF_0000_0000_0000;
+
 #[derive(Clone)]
 pub struct UploadedMesh {
     pub positions: Vec<f32>,
@@ -127,21 +131,47 @@ pub fn mesh_cache_for(
         .clone()
 }
 
+fn plate_quad() -> Arc<UploadedMesh> {
+    let half = PLATE_SIZE_MM * 0.5;
+    Arc::new(UploadedMesh {
+        positions: vec![
+            -half, 0.0, -half, half, 0.0, -half, half, 0.0, half, -half, 0.0, half,
+        ],
+        normals: vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+        indices: vec![0, 1, 2, 0, 2, 3],
+    })
+}
+
 pub fn draw_frame(
     doc: &Document,
     view_proj: Mat4,
     cache: &mut HashMap<(u64, u64), Arc<UploadedMesh>>,
     grid: Arc<GridLines>,
     clear: [f32; 4],
+    plate_color: [f32; 3],
     xray: bool,
     clip_y: f32,
 ) -> DrawFrame {
     let live: std::collections::HashSet<(u64, u64)> =
         doc.objects().iter().map(|o| (o.id.0, o.revision)).collect();
     cache.retain(|key, _| live.contains(key));
-    let objects = doc
-        .objects()
+    let bed = plate_quad();
+    let mut objects: Vec<DrawObject> = doc
+        .plate_layouts()
         .iter()
+        .enumerate()
+        .map(|(index, plate)| DrawObject {
+            id: PLATE_MESH_ID + index as u64,
+            revision: 1,
+            color: plate_color,
+            selected: false,
+            alpha: 1.0,
+            model: Mat4::from_translation(Vec3::new(plate.center_x, -0.45, plate.center_z))
+                .to_cols_array(),
+            mesh: Arc::clone(&bed),
+        })
+        .collect();
+    objects.extend(doc.objects().iter()
         .filter(|object| doc.is_shown(object.id))
         .map(|object| {
             let mut color = object.color.to_rgb_f32();
@@ -170,8 +200,7 @@ pub fn draw_frame(
                 model: doc.display_matrix(object.id).to_cols_array(),
                 mesh: mesh_cache_for(cache, object),
             }
-        })
-        .collect();
+        }));
     DrawFrame {
         view_proj: view_proj.to_cols_array(),
         objects,

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use glow::HasContext;
 
-use crate::scene::{DrawFrame, UploadedMesh};
+use crate::scene::{DrawFrame, UploadedMesh, PLATE_MESH_ID};
 
 const MESH_VS: &str = r#"#version 300 es
 precision highp float;
@@ -123,10 +123,8 @@ fn paint(
         *guard = Some(GpuState::new(gl)?);
     }
     let gpu = guard.as_mut().unwrap();
-    if !gpu.grid_ready {
-        gpu.upload_grid(gl, &frame.grid.vertices);
-        gpu.grid_ready = true;
-    }
+    gpu.upload_grid(gl, &frame.grid.vertices);
+    gpu.grid_ready = true;
     let live: HashMap<u64, ()> = frame.objects.iter().map(|o| (o.id, ())).collect();
     let stale: Vec<u64> = gpu
         .meshes
@@ -176,12 +174,6 @@ fn paint(
         gl.cull_face(glow::BACK);
         gl.front_face(glow::CCW);
 
-        gl.use_program(Some(gpu.line_program));
-        let loc = gl.get_uniform_location(gpu.line_program, "u_vp");
-        gl.uniform_matrix_4_f32_slice(loc.as_ref(), false, &frame.view_proj);
-        gl.bind_vertex_array(Some(gpu.grid_vao));
-        gl.draw_arrays(glow::LINES, 0, gpu.grid_count);
-
         gl.use_program(Some(gpu.mesh_program));
         let vp_loc = gl.get_uniform_location(gpu.mesh_program, "u_vp");
         let model_loc = gl.get_uniform_location(gpu.mesh_program, "u_model");
@@ -191,6 +183,32 @@ fn paint(
         let clip_loc = gl.get_uniform_location(gpu.mesh_program, "u_clip_y");
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
         gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
+        for object in frame.objects.iter().filter(|object| object.id >= PLATE_MESH_ID) {
+            let Some(mesh) = gpu.meshes.get(&object.id) else {
+                continue;
+            };
+            gl.uniform_matrix_4_f32_slice(model_loc.as_ref(), false, &object.model);
+            gl.uniform_3_f32(
+                color_loc.as_ref(),
+                object.color[0],
+                object.color[1],
+                object.color[2],
+            );
+            gl.uniform_1_f32(sel_loc.as_ref(), 0.0);
+            gl.uniform_1_f32(alpha_loc.as_ref(), 1.0);
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.count, glow::UNSIGNED_INT, 0);
+        }
+
+        gl.use_program(Some(gpu.line_program));
+        let loc = gl.get_uniform_location(gpu.line_program, "u_vp");
+        gl.uniform_matrix_4_f32_slice(loc.as_ref(), false, &frame.view_proj);
+        gl.bind_vertex_array(Some(gpu.grid_vao));
+        gl.draw_arrays(glow::LINES, 0, gpu.grid_count);
+
+        gl.use_program(Some(gpu.mesh_program));
+        gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
+        gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
         for transparent in [false, true] {
             if transparent {
                 gl.enable(glow::BLEND);
@@ -198,6 +216,9 @@ fn paint(
                 gl.depth_mask(false);
             }
             for object in &frame.objects {
+                if object.id >= PLATE_MESH_ID {
+                    continue;
+                }
                 let is_glass = object.alpha < 0.99;
                 if is_glass != transparent {
                     continue;
