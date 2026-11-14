@@ -1313,7 +1313,6 @@ impl eframe::App for PrintCaddyApp {
                     });
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.small(self.tr("Home"));
                     undo = ui
                         .add_enabled(self.history.can_undo(), egui::Button::new(self.tr("Undo")))
                         .clicked();
@@ -1977,9 +1976,9 @@ impl PrintCaddyApp {
             .iter()
             .map(|plate| {
                 let at = glam::Vec3::new(
-                    plate.center_x - PLATE_SIZE_MM * 0.5 + 28.0,
+                    plate.center_x,
                     0.6,
-                    plate.center_z - PLATE_SIZE_MM * 0.5 + 18.0,
+                    plate.center_z + PLATE_SIZE_MM * 0.5 - 22.0,
                 );
                 (
                     plate.slot,
@@ -2208,61 +2207,6 @@ impl PrintCaddyApp {
         });
     }
 
-    fn delete_active_plate(&mut self) {
-        let slot = self
-            .doc
-            .selection()
-            .and_then(|id| self.doc.object(id))
-            .map(|object| self.doc.plate_at(object.position).slot)
-            .or_else(|| self.doc.plate_layouts().last().map(|plate| plate.slot));
-        let Some(slot) = slot else {
-            return;
-        };
-        self.history.end();
-        self.history.begin(&self.doc);
-        match self.doc.delete_plate(slot) {
-            Ok(()) => {
-                self.history.end();
-                self.notice = "Deleted the plate. Its bodies moved beside the grid.".into();
-            }
-            Err(err) => {
-                self.history.cancel();
-                self.notice = err;
-            }
-        }
-    }
-
-    fn toggle_active_plate_lock(&mut self) {
-        let Some(slot) = self
-            .doc
-            .selection()
-            .and_then(|id| self.doc.object(id))
-            .map(|object| self.doc.plate_at(object.position).slot)
-            .or_else(|| Some(0))
-        else {
-            return;
-        };
-        let locked = self
-            .doc
-            .plate_layouts()
-            .iter()
-            .find(|plate| plate.slot == slot)
-            .is_some_and(|plate| {
-                self.doc.objects().iter().any(|object| {
-                    object.locked && self.doc.plate_at(object.position).slot == plate.slot
-                })
-            });
-        self.history.end();
-        self.history.begin(&self.doc);
-        self.doc.lock_plate(slot, !locked);
-        self.history.end();
-        self.notice = if locked {
-            "Unlocked the plate.".into()
-        } else {
-            "Locked the plate.".into()
-        };
-    }
-
     fn paint_plate_numbers(&self, painter: &egui::Painter, aspect: f32, rect: Rect) {
         for plate in self.doc.plate_layouts() {
             let at = glam::Vec3::new(
@@ -2278,7 +2222,7 @@ impl PrintCaddyApp {
                 egui::Align2::CENTER_CENTER,
                 format!("{:02}", plate.number),
                 egui::FontId::proportional(14.0),
-                Color32::from_rgb(201, 212, 219),
+                Color32::from_rgb(40, 48, 58),
             );
         }
     }
