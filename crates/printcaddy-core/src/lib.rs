@@ -11,6 +11,7 @@ mod plates;
 mod project;
 mod ray;
 mod sketch;
+mod slicer;
 mod solids;
 mod stl;
 mod updates;
@@ -35,6 +36,11 @@ pub use plates::{PlateLayout, PLATES_PER_ROW, PLATE_GAP_MM};
 pub use project::{document_from_json, document_to_json, ProjectError};
 pub use ray::{ray_plane_y, Ray};
 pub use sketch::{build_sketch, is_closed, seat_sketch, SketchDef, SketchError, SketchOp};
+pub use slicer::{
+    apply_bambu_process, apply_preset, approximate_layer, material_temps, parse_gcode, slice_plate,
+    standard_settings, Adhesion, InfillPattern, MaterialTemps, PathKind, PresetId, SliceError,
+    SliceLayer, SliceResult, SliceSettings, Toolpath,
+};
 pub use solids::{filleted_box, FilletError, Shape};
 pub use stl::{document_to_stl, import_stl, mesh_from_stl, mesh_to_stl_binary, StlError};
 pub use updates::{build_name, compare_builds, UpdateReport};

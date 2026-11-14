@@ -14,20 +14,26 @@ layout(location = 1) in vec3 a_normal;
 uniform mat4 u_vp;
 uniform mat4 u_model;
 out vec3 v_n;
+out float v_y;
 void main() {
-    gl_Position = u_vp * u_model * vec4(a_pos, 1.0);
+    vec4 world = u_model * vec4(a_pos, 1.0);
+    gl_Position = u_vp * world;
     v_n = mat3(u_model) * a_normal;
+    v_y = world.y;
 }
 "#;
 
 const MESH_FS: &str = r#"#version 300 es
 precision mediump float;
 in vec3 v_n;
+in float v_y;
 uniform vec3 u_color;
 uniform float u_selected;
 uniform float u_alpha;
+uniform float u_clip_y;
 out vec4 frag;
 void main() {
+    if (v_y > u_clip_y) discard;
     vec3 n = normalize(v_n);
     float key = clamp(dot(n, normalize(vec3(0.35, 0.92, 0.22))), 0.0, 1.0);
     float fill = clamp(dot(n, normalize(vec3(-0.45, 0.15, -0.55))), 0.0, 1.0);
@@ -182,7 +188,9 @@ fn paint(
         let color_loc = gl.get_uniform_location(gpu.mesh_program, "u_color");
         let sel_loc = gl.get_uniform_location(gpu.mesh_program, "u_selected");
         let alpha_loc = gl.get_uniform_location(gpu.mesh_program, "u_alpha");
+        let clip_loc = gl.get_uniform_location(gpu.mesh_program, "u_clip_y");
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
+        gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
         for transparent in [false, true] {
             if transparent {
                 gl.enable(glow::BLEND);

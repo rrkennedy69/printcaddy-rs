@@ -4,11 +4,13 @@ use std::rc::Rc;
 
 use egui::{Color32, Pos2, Rect, Sense};
 use printcaddy_core::{
-    bambu_material, bambu_materials, document_from_obj, document_from_step, document_to_obj,
-    document_to_step, document_to_stl, export_3mf, export_bambu_3mf, extract_loaded_filaments,
-    import_3mf, import_bambu_3mf, import_dxf, import_stl, import_svg, ray_plane_y, snap_mm,
-    BooleanOp, Document, FilamentRef, History, LoadedFilament, ObjectId, Ray, Shape, SketchDef,
-    SketchOp, DEFAULT_BAMBU_MATERIAL, DEFAULT_MODEL_COLOR, DEFAULT_SNAP_MM, PLATE_SIZE_MM,
+    approximate_layer, bambu_material, bambu_materials, document_from_obj, document_from_step,
+    document_to_obj, document_to_step, document_to_stl, export_3mf, export_bambu_3mf,
+    extract_loaded_filaments, import_3mf, import_bambu_3mf, import_dxf, import_stl, import_svg,
+    ray_plane_y, slice_plate, snap_mm, standard_settings, BooleanOp, Document, FilamentRef,
+    History, InfillPattern, LoadedFilament, ObjectId, PathKind, PresetId, Ray, Shape, SketchDef,
+    SketchOp, SliceResult, SliceSettings, DEFAULT_BAMBU_MATERIAL, DEFAULT_MODEL_COLOR,
+    DEFAULT_SNAP_MM, PLATE_SIZE_MM,
 };
 
 use crate::camera::Camera;
@@ -107,6 +109,15 @@ pub struct PrintCaddyApp {
     loaded: Vec<LoadedFilament>,
     /// The next file dialog fills Currently Loaded instead of the model.
     settings_import: bool,
+    show_slicer: bool,
+    slice_preview: bool,
+    slice_settings: SliceSettings,
+    slice_result: Option<SliceResult>,
+    slice_layer: usize,
+    slice_note: String,
+    slice_tab: usize,
+    layer_view: bool,
+    layer_z: f32,
     gesture: Gesture,
     touches: HashMap<u64, Pos2>,
     /// The frame a touch ends, the browser also synthesises a mouse click. Skip that click.
@@ -159,6 +170,15 @@ impl PrintCaddyApp {
             material_id: DEFAULT_BAMBU_MATERIAL.into(),
             loaded: library::load_filaments(),
             settings_import: false,
+            show_slicer: false,
+            slice_preview: false,
+            slice_settings: standard_settings(),
+            slice_result: None,
+            slice_layer: 0,
+            slice_note: String::new(),
+            slice_tab: 0,
+            layer_view: false,
+            layer_z: 20.0,
             gesture: Gesture::None,
             touches: HashMap::new(),
             swallow_mouse: false,
@@ -1360,6 +1380,26 @@ impl eframe::App for PrintCaddyApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Slice").clicked() {
+                        self.show_slicer = true;
+                    }
+                    let layers = if self.layer_view {
+                        "Layers on"
+                    } else {
+                        "Layers"
+                    };
+                    if ui.button(layers).clicked() {
+                        self.layer_view = !self.layer_view;
+                        if self.layer_view {
+                            self.layer_z = self.model_top();
+                            self.notice =
+                                "Layer view. The slider hides everything above this height.".into();
+                        } else {
+                            self.notice = "Layer view off. The model is unchanged.".into();
+                        }
+                    }
+                });
                 let available = ui.available_size();
                 let (rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
                 view_rect = rect;
@@ -1390,6 +1430,7 @@ impl eframe::App for PrintCaddyApp {
                     grid,
                     colors.viewport,
                     colors.xray,
+                    if self.layer_view { self.layer_z } else { 1.0e6 },
                 );
                 let callback = self.painter.callback(frame);
                 ui.painter().add(egui::PaintCallback { rect, callback });
@@ -1398,10 +1439,10 @@ impl eframe::App for PrintCaddyApp {
                 }
                 self.paint_sketch(ui.painter(), aspect, rect);
                 self.paint_plate_numbers(ui.painter(), aspect, rect);
+                self.paint_toolpaths(ui.painter(), aspect, rect);
                 let cube = overlay::view_cube_rect(rect);
                 self.cube_faces = overlay::paint_view_cube(ui.painter(), &self.camera, cube);
             });
-        let _ = view_rect;
         if ctx.input(|input| input.pointer.any_released()) {
             self.doc.bake_rotations();
             self.history.end();
@@ -1410,6 +1451,8 @@ impl eframe::App for PrintCaddyApp {
         self.projects_window(ctx);
         self.updates_window(ctx);
         self.exchange_windows(ctx);
+        self.slicer_window(ctx);
+        self.layer_slider(ctx, view_rect);
         files::publish_status(&format!(
             "{} | {} theme={} mobile={}",
             self.status_text(),
@@ -1699,6 +1742,240 @@ impl PrintCaddyApp {
         }
         self.history.end();
         self.notice = format!("Painted the selection {}", color.hex_string());
+    }
+
+    fn model_top(&self) -> f32 {
+        self.doc
+            .objects()
+            .iter()
+            .filter(|object| self.doc.is_shown(object.id))
+            .map(|object| object.position.y + object.size().2)
+            .fold(0.2, f32::max)
+            .max(0.2)
+    }
+
+    fn layer_slider(&mut self, ctx: &egui::Context, rect: Rect) {
+        if !self.layer_view || rect.width() < 8.0 {
+            return;
+        }
+        let top = self.model_top();
+        self.layer_z = self.layer_z.clamp(0.0, top);
+        egui::Area::new(egui::Id::new("layer-view"))
+            .fixed_pos(rect.right_top() + egui::vec2(-200.0, 28.0))
+            .show(ctx, |ui| {
+                ui.set_width(48.0);
+                ui.label(format!("{:.2} mm", self.layer_z));
+                ui.add(
+                    egui::Slider::new(&mut self.layer_z, 0.0..=top)
+                        .vertical()
+                        .show_value(false),
+                );
+                ui.label(format!("Layer ≈ {}", approximate_layer(self.layer_z)));
+                ui.small(format!("/ {}", approximate_layer(top)));
+            });
+    }
+
+    fn slicer_window(&mut self, ctx: &egui::Context) {
+        if !self.show_slicer {
+            return;
+        }
+        let mut open = true;
+        let mut run = false;
+        let mut export = false;
+        let mut download = false;
+        let mut preset = None;
+        egui::Window::new("Slicer")
+            .open(&mut open)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(!self.slice_preview, "Prepare").clicked() {
+                        self.slice_preview = false;
+                    }
+                    if ui
+                        .add_enabled(self.slice_result.is_some(), egui::Button::new("Preview"))
+                        .clicked()
+                    {
+                        self.slice_preview = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Slice plate").clicked() {
+                        run = true;
+                    }
+                    if ui.button("Export 3MF").clicked() {
+                        export = true;
+                    }
+                    if self.slice_result.is_some() && ui.button("Download G-code").clicked() {
+                        download = true;
+                    }
+                });
+                if !self.slice_note.is_empty() {
+                    ui.small(&self.slice_note);
+                }
+                if let Some(result) = &self.slice_result {
+                    ui.label(format!(
+                        "Time {} · filament {:.2} m · {:.1} g · {} layers",
+                        format_duration(result.print_time_sec),
+                        result.filament_mm / 1000.0,
+                        result.filament_g,
+                        result.layers.len()
+                    ));
+                    let max_layer = result.layers.len().saturating_sub(1);
+                    self.slice_layer = self.slice_layer.min(max_layer);
+                    let z = result.layers[self.slice_layer].z;
+                    ui.label(format!(
+                        "Layer {} / {} · {:.2} mm",
+                        self.slice_layer + 1,
+                        result.layers.len(),
+                        z
+                    ));
+                    ui.add(egui::Slider::new(&mut self.slice_layer, 0..=max_layer).text("layers"));
+                }
+                ui.separator();
+                ui.label("Preset");
+                ui.horizontal(|ui| {
+                    for (id, label) in [
+                        (PresetId::Draft, "0.28 mm Extra Draft"),
+                        (PresetId::Standard, "0.20 mm Standard"),
+                        (PresetId::Fine, "0.12 mm Fine"),
+                    ] {
+                        if ui.button(label).clicked() {
+                            preset = Some(id);
+                        }
+                    }
+                });
+                ui.label("Process");
+                ui.horizontal_wrapped(|ui| {
+                    for (index, label) in ["Quality", "Strength", "Speed", "Support", "Others"]
+                        .iter()
+                        .enumerate()
+                    {
+                        if ui.selectable_label(self.slice_tab == index, *label).clicked() {
+                            self.slice_tab = index;
+                        }
+                    }
+                });
+                let settings = &mut self.slice_settings;
+                match self.slice_tab {
+                    0 => {
+                        ui.add(egui::Slider::new(&mut settings.layer_height, 0.08..=0.28).text("Layer mm"));
+                        ui.add(egui::Slider::new(&mut settings.first_layer_height, 0.08..=0.6).text("First mm"));
+                    }
+                    1 => {
+                        ui.add(egui::Slider::new(&mut settings.walls, 1..=8).text("Walls"));
+                        ui.add(egui::Slider::new(&mut settings.infill, 0.0..=100.0).text("Infill %"));
+                        ui.horizontal(|ui| {
+                            if ui.button("Grid").clicked() {
+                                settings.infill_pattern = InfillPattern::Grid;
+                            }
+                            if ui.button("Lines").clicked() {
+                                settings.infill_pattern = InfillPattern::Lines;
+                            }
+                            if ui.button("Concentric").clicked() {
+                                settings.infill_pattern = InfillPattern::Concentric;
+                            }
+                        });
+                    }
+                    2 => {
+                        ui.add(egui::Slider::new(&mut settings.speed_outer, 5.0..=1000.0).text("Outer"));
+                        ui.add(egui::Slider::new(&mut settings.speed_inner, 5.0..=1000.0).text("Inner"));
+                        ui.add(egui::Slider::new(&mut settings.speed_infill, 5.0..=1000.0).text("Infill"));
+                        ui.add(egui::Slider::new(&mut settings.speed_travel, 20.0..=1500.0).text("Travel"));
+                    }
+                    3 => {
+                        ui.checkbox(&mut settings.supports, "Enable support");
+                        ui.small("Support towers are not generated. The switch is kept for the 3MF note.");
+                    }
+                    _ => {
+                        ui.horizontal(|ui| {
+                            if ui.button("Skirt").clicked() {
+                                settings.adhesion = printcaddy_core::Adhesion::Skirt;
+                            }
+                            if ui.button("Brim").clicked() {
+                                settings.adhesion = printcaddy_core::Adhesion::Brim;
+                            }
+                            if ui.button("None").clicked() {
+                                settings.adhesion = printcaddy_core::Adhesion::None;
+                            }
+                        });
+                    }
+                }
+                ui.small("This page slices perimeters and infill in the browser. It does not run CuraEngine.");
+            });
+        if let Some(id) = preset {
+            self.slice_settings = printcaddy_core::apply_preset(self.slice_settings.clone(), id);
+            self.slice_result = None;
+        }
+        if run {
+            let plate = self
+                .doc
+                .selection()
+                .and_then(|id| self.doc.object(id))
+                .map(|object| self.doc.plate_at(object.position).number)
+                .unwrap_or(1);
+            match slice_plate(&self.doc, plate, &self.slice_settings) {
+                Ok(result) => {
+                    self.slice_layer = result.layers.len().saturating_sub(1);
+                    self.slice_note = result.note.clone();
+                    self.notice = format!(
+                        "Sliced plate {plate}: {} layers, {:.1} g.",
+                        result.layers.len(),
+                        result.filament_g
+                    );
+                    self.slice_result = Some(result);
+                    self.slice_preview = true;
+                }
+                Err(err) => {
+                    self.slice_result = None;
+                    self.slice_note = err.to_string();
+                    self.notice = err.to_string();
+                }
+            }
+        }
+        if export {
+            match export_bambu_3mf(&self.doc, false) {
+                Ok(bytes) => {
+                    files::download_named("printcaddy-bambu.3mf", "model/3mf", &bytes);
+                    self.notice = "Exported Bambu 3MF from the slicer.".into();
+                }
+                Err(err) => self.notice = err.to_string(),
+            }
+        }
+        if download {
+            if let Some(result) = &self.slice_result {
+                files::download_text("printcaddy.gcode", &result.gcode);
+                self.notice = "Downloaded the G-code.".into();
+            }
+        }
+        self.show_slicer = open;
+    }
+
+    fn paint_toolpaths(&self, painter: &egui::Painter, aspect: f32, rect: Rect) {
+        let Some(result) = &self.slice_result else {
+            return;
+        };
+        if !self.show_slicer || !self.slice_preview {
+            return;
+        }
+        let last = self.slice_layer.min(result.layers.len().saturating_sub(1));
+        for layer in result.layers.iter().take(last + 1) {
+            for path in &layer.paths {
+                let color = path_color(path.kind);
+                let mut previous = None;
+                for point in &path.points {
+                    let world = glam::Vec3::new(point[0], path.z, point[1]);
+                    let Some(screen) = overlay::project(&self.camera, aspect, rect, world) else {
+                        previous = None;
+                        continue;
+                    };
+                    if let Some(from) = previous {
+                        painter.line_segment([from, screen], egui::Stroke::new(1.4_f32, color));
+                    }
+                    previous = Some(screen);
+                }
+            }
+        }
     }
 
     fn settings_window(&mut self, ctx: &egui::Context) {
@@ -2036,6 +2313,28 @@ fn ray_onto_plane(ray: Ray, origin: glam::Vec3, normal: glam::Vec3) -> Option<gl
         return None;
     }
     Some(ray.origin + ray.direction * t)
+}
+
+fn format_duration(seconds: f32) -> String {
+    let total = seconds.round().max(0.0) as u32;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    if hours > 0 {
+        format!("{hours} h {minutes} min")
+    } else {
+        format!("{minutes} min")
+    }
+}
+
+fn path_color(kind: PathKind) -> Color32 {
+    let rgb = match kind {
+        PathKind::OuterWall => [237, 115, 33],
+        PathKind::InnerWall => [242, 191, 51],
+        PathKind::Skin => [217, 64, 77],
+        PathKind::Infill => [166, 77, 191],
+        PathKind::Skirt => [102, 153, 230],
+    };
+    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
 }
 
 fn colour_from_hex(text: &str) -> printcaddy_core::Color {

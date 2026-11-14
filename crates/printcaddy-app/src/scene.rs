@@ -28,6 +28,8 @@ pub struct DrawFrame {
     pub objects: Vec<DrawObject>,
     pub grid: Arc<GridLines>,
     pub clear: [f32; 4],
+    /// Hide mesh fragments above this world Y. A huge value leaves the model whole.
+    pub clip_y: f32,
 }
 
 pub struct GridLines {
@@ -132,6 +134,7 @@ pub fn draw_frame(
     grid: Arc<GridLines>,
     clear: [f32; 4],
     xray: bool,
+    clip_y: f32,
 ) -> DrawFrame {
     let live: std::collections::HashSet<(u64, u64)> =
         doc.objects().iter().map(|o| (o.id.0, o.revision)).collect();
@@ -174,6 +177,7 @@ pub fn draw_frame(
         objects,
         grid,
         clear,
+        clip_y,
     }
 }
 

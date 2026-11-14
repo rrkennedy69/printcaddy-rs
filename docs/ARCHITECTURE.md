@@ -48,7 +48,7 @@ Checked work is in the app today. Everything else is still only in the TypeScrip
 5. **Booleans.** Join, subtract, and intersect on closed meshes, groups, see-through holes that cut when grouped, and a typed fillet on a box. Done for those cases. Bundle, hull, split, chamfer, shell, and a fillet on one clicked edge stay later.
 6. **Exchange.** 3MF and OBJ with colour, SVG and DXF outlines as sketches, and triangulated STEP. Done for that subset. Analytic STEP and top-view SVG/DXF export stay later.
 7. **Plates and Bambu filaments.** Rows of three, the Bambu colour list, Currently Loaded from a settings file, and a Bambu 3MF with one filament slot per colour. Done for that subset. Send to Bambu Studio stays out.
-8. **Slice.** The slicer page (prepare and preview), materials, and the layer-view cutaway. Not started.
+8. **Slice.** Prepare / preview, presets, a contour slicer (not CuraEngine), toolpath preview, and the layer-view cutaway. Done for that subset. Send to Bambu Studio stays out.
 9. **Chrome.** Themes including X-Ray, Settings with Mobile mode, Check for updates, and browser projects. Done for those. Google Drive uses the existing client and waits on that client's allowed origin. Languages stay later. The AI helper is not part of this rewrite.
 
 Each round should keep the wasm build on GitHub Pages and the core tests green. The TypeScript site is not modified and stays the production app until the boxes in `docs/FEATURES.md` are checked.

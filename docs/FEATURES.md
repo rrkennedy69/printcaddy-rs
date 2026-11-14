@@ -187,7 +187,7 @@ These are the behaviours to match, not just the presence of a widget.
 - [ ] Hide the plate to look from below
 - [ ] Second view in its own window, with its own camera, cube, and camera bar, remembering where it was
 - [ ] Section view along X, Y, or Z with coarse and fine sliders; export is uncut; section SVG at 1:1; measure wall thickness on the cut
-- [ ] Layer view: a vertical slider that cuts away everything above a height, Bambu-style, readout in mm and approximate layer number, without changing the model
+- [x] Layer view: a vertical slider that cuts away everything above a height, readout in mm and approximate layer number at 0.20 mm, without changing the model
 - [ ] Workplane on a face (W), on a corner, along an edge, or on the empty plate; the eye hides the plane while it still applies
 - [ ] Grid and snapping, including imperial fractions, custom snap units (whole, half, quarter), and darker lines every centimetre in their own colour
 - [ ] Axis arrows at the plate's front-left, matching Bambu Studio / OrcaSlicer, with a setting to hide them
@@ -241,13 +241,13 @@ These are the behaviours to match, not just the presence of a widget.
 - [x] Default filament PLA Basic (`GFA00`) where a Bambu material is required. A new body is still `#8A98A6` until it is painted
 - [x] Loaded filaments: import colour, type, preset name, and id from a Bambu settings file, under Settings. Shown as Currently Loaded at the top of the colour picker. Slicer process settings are not applied
 - [ ] Materials with nozzle, bed, density, and fan: PLA, PETG, PET, ABS, ASA, TPU, PC, PA, PVA
-- [ ] Slicer page in the Bambu Studio prepare / preview layout
-- [ ] Presets 0.28 mm extra draft, 0.20 mm standard, 0.12 mm fine
-- [ ] Process tabs: quality, strength, speed, support, others (layer height, walls, infill and pattern, seam, speeds, tree or normal supports, brim or skirt, ironing, nozzle, retraction)
-- [ ] Import a Bambu profile or settings file into the slicer
-- [ ] Slice with the wasm slicer engine, then preview toolpaths and a layer slider
-- [ ] Print time, filament length, and weight
-- [ ] Slice, then Send to Bambu Studio or export the 3MF from the slicer page
+- [x] Slicer page with Prepare and Preview. It is this app's contour slicer, not CuraEngine
+- [x] Presets 0.28 mm extra draft, 0.20 mm standard, 0.12 mm fine
+- [x] Process tabs for layer height, walls, infill, speeds, support, and skirt or brim. Gyroid and the other non-grid patterns are sliced as a grid. Support towers and ironing are not generated
+- [x] Import of the Bambu keys this page already edits (layer height, walls, infill, temperatures, support on/off)
+- [x] Slice, then preview the toolpaths with a layer slider
+- [x] Print time, filament length, and weight from those paths
+- [ ] Send to Bambu Studio stays out. The slicer page can export the existing Bambu 3MF and download the G-code
 - [ ] Volume, weight, and filament length in the export window before slicing
 
 ## Themes, settings, mobile, updates
