@@ -591,7 +591,7 @@ pub fn paint_rulers(
             if mark > half - 2.0 {
                 break;
             }
-            let x_at = Vec3::new(ox - half + mark, 0.4, oz + half + 2.0);
+            let x_at = Vec3::new(ox - half + mark, 0.6, oz + half - 8.0);
             if let Some(screen) = project(camera, aspect, rect, x_at) {
                 painter.text(
                     screen,
@@ -601,7 +601,7 @@ pub fn paint_rulers(
                     red,
                 );
             }
-            let z_at = Vec3::new(ox - half - 2.0, 0.4, oz - half + mark);
+            let z_at = Vec3::new(ox - half + 8.0, 0.6, oz - half + mark);
             if let Some(screen) = project(camera, aspect, rect, z_at) {
                 painter.text(
                     screen,

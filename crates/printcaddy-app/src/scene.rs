@@ -22,6 +22,8 @@ pub struct DrawObject {
     pub color: [f32; 3],
     pub selected: bool,
     pub alpha: f32,
+    /// 1 draws the colour flat. The build plate uses this so lighting cannot wash it out.
+    pub unlit: f32,
     pub model: [f32; 16],
     pub mesh: Arc<UploadedMesh>,
 }
@@ -61,9 +63,9 @@ impl GridLines {
                 vertices.extend_from_slice(&[b[0], b[1], b[2], color[0], color[1], color[2]]);
             };
             let fine = [
-                minor[0] * 0.55_f32 + 0.35,
-                minor[1] * 0.55_f32 + 0.35,
-                minor[2] * 0.55_f32 + 0.35,
+                (minor[0] + 0.92) * 0.5,
+                (minor[1] + 0.93) * 0.5,
+                (minor[2] + 0.94) * 0.5,
             ];
             let mut fine_cursor = (-half / 5.0).ceil() * 5.0;
             while fine_cursor < half - 0.01 {
@@ -185,7 +187,8 @@ pub fn draw_frame(
             color: plate_color,
             selected: false,
             alpha: 1.0,
-            model: Mat4::from_translation(Vec3::new(plate.center_x, -0.45, plate.center_z))
+            unlit: 1.0,
+            model: Mat4::from_translation(Vec3::new(plate.center_x, -0.05, plate.center_z))
                 .to_cols_array(),
             mesh: Arc::clone(&bed),
         })
@@ -216,6 +219,7 @@ pub fn draw_frame(
                 color,
                 selected: doc.is_selected(object.id),
                 alpha,
+                unlit: 0.0,
                 model: doc.display_matrix(object.id).to_cols_array(),
                 mesh: mesh_cache_for(cache, object),
             }

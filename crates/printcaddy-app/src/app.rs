@@ -1597,7 +1597,7 @@ impl PrintCaddyApp {
             }
             chrome::Cmd::Fit => {
                 self.camera.target = glam::Vec3::ZERO;
-                self.camera.distance = 340.0;
+                self.camera.distance = 230.0;
             }
             chrome::Cmd::ZoomIn => self.camera.zoom_factor(0.8),
             chrome::Cmd::ZoomOut => self.camera.zoom_factor(1.25),
@@ -1881,32 +1881,82 @@ impl PrintCaddyApp {
         }
         let mut open = true;
         let mut chosen = None;
-        egui::Window::new(self.tr("Shapes"))
+        let mut start_sketch = false;
+        egui::Window::new("Shapes")
             .open(&mut open)
-            .default_width(520.0)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 36.0))
+            .default_width(680.0)
+            .resizable(true)
             .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Custom shapes")
+                        .size(13.0)
+                        .strong()
+                        .color(chrome::INK),
+                );
+                ui.small("Select one or more bodies and choose \"Save selection\". They wait here for every design.");
+                ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new("BASIC SHAPES")
                         .size(11.0)
                         .strong()
                         .color(chrome::MUTED),
                 );
-                ui.horizontal_wrapped(|ui| {
-                    for shape in Shape::ALL {
-                        let key = shape_icon_key(shape);
-                        ui.vertical(|ui| {
-                            ui.set_width(88.0);
-                            if let Some(tex) = self.icons.shapes.get(key) {
-                                ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(64.0, 64.0)));
+                let items = library_items();
+                let cols = 4;
+                egui::Grid::new("shape-library")
+                    .num_columns(cols)
+                    .spacing(egui::vec2(8.0, 6.0))
+                    .show(ui, |ui| {
+                        for (index, item) in items.iter().enumerate() {
+                            let built = item.shape.is_some() || item.sketch;
+                            ui.vertical(|ui| {
+                                ui.set_min_width(150.0);
+                                let tint = if built {
+                                    Color32::WHITE
+                                } else {
+                                    Color32::from_rgb(186, 186, 186)
+                                };
+                                if let Some(tex) = self.icons.shapes.get(item.icon) {
+                                    let image = egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                                        .tint(tint);
+                                    let response = ui.add(image.sense(Sense::click()));
+                                    if response.clicked() && built {
+                                        if item.sketch {
+                                            start_sketch = true;
+                                        } else {
+                                            chosen = item.shape;
+                                        }
+                                    } else if response.clicked() {
+                                        self.notice = format!("{} is not in this build yet.", item.label);
+                                    }
+                                }
+                                let color = if built { chrome::INK } else { chrome::MUTED };
+                                let label = ui.add(
+                                    egui::Label::new(egui::RichText::new(item.label).size(13.0).color(color))
+                                        .sense(Sense::click()),
+                                );
+                                if label.clicked() && built {
+                                    if item.sketch {
+                                        start_sketch = true;
+                                    } else {
+                                        chosen = item.shape;
+                                    }
+                                } else if label.clicked() {
+                                    self.notice = format!("{} is not in this build yet.", item.label);
+                                }
+                            });
+                            if (index + 1) % cols == 0 {
+                                ui.end_row();
                             }
-                            if ui.button(shape.label()).clicked() {
-                                chosen = Some(shape);
-                            }
-                        });
-                    }
-                });
+                        }
+                    });
             });
-        if let Some(shape) = chosen {
+        if start_sketch {
+            self.begin_sketch();
+            self.show_shapes = false;
+        } else if let Some(shape) = chosen {
             self.history.end();
             self.history.begin(&self.doc);
             let id = self.doc.add_shape(shape);
@@ -2722,6 +2772,57 @@ impl PrintCaddyApp {
             self.notice = self.update_text.clone();
         }
     }
+}
+
+struct LibraryItem {
+    label: &'static str,
+    icon: &'static str,
+    shape: Option<Shape>,
+    sketch: bool,
+}
+
+fn library_items() -> &'static [LibraryItem] {
+    &[
+        LibraryItem { label: "Box", icon: "box", shape: Some(Shape::Box), sketch: false },
+        LibraryItem { label: "Rounded Box", icon: "roundedBox", shape: Some(Shape::RoundedBox), sketch: false },
+        LibraryItem { label: "Sketch", icon: "sketch", shape: None, sketch: true },
+        LibraryItem { label: "Cylinder", icon: "cylinder", shape: Some(Shape::Cylinder), sketch: false },
+        LibraryItem { label: "Capsule", icon: "slot", shape: Some(Shape::Capsule), sketch: false },
+        LibraryItem { label: "Ellipse", icon: "ellipse", shape: Some(Shape::Ellipse), sketch: false },
+        LibraryItem { label: "Polygon", icon: "polygon", shape: Some(Shape::Polygon), sketch: false },
+        LibraryItem { label: "Sphere", icon: "sphere", shape: Some(Shape::Sphere), sketch: false },
+        LibraryItem { label: "Cone", icon: "cone", shape: Some(Shape::Cone), sketch: false },
+        LibraryItem { label: "Pyramid", icon: "pyramid", shape: Some(Shape::Pyramid), sketch: false },
+        LibraryItem { label: "Wedge", icon: "wedge", shape: Some(Shape::Wedge), sketch: false },
+        LibraryItem { label: "Round Roof", icon: "round-roof", shape: Some(Shape::RoundRoof), sketch: false },
+        LibraryItem { label: "Half Sphere", icon: "half-sphere", shape: Some(Shape::HalfSphere), sketch: false },
+        LibraryItem { label: "Paraboloid", icon: "paraboloid", shape: Some(Shape::Paraboloid), sketch: false },
+        LibraryItem { label: "Torus", icon: "torus", shape: Some(Shape::Torus), sketch: false },
+        LibraryItem { label: "Loft", icon: "loft", shape: None, sketch: false },
+        LibraryItem { label: "Vase", icon: "vase", shape: None, sketch: false },
+        LibraryItem { label: "Tube", icon: "tube", shape: Some(Shape::Tube), sketch: false },
+        LibraryItem { label: "Bent Tube", icon: "bentTube", shape: None, sketch: false },
+        LibraryItem { label: "Counterbore", icon: "counterbore", shape: None, sketch: false },
+        LibraryItem { label: "Countersink", icon: "countersink", shape: None, sketch: false },
+        LibraryItem { label: "Teardrop hole", icon: "teardrop", shape: None, sketch: false },
+        LibraryItem { label: "Text", icon: "text", shape: Some(Shape::Text), sketch: false },
+        LibraryItem { label: "Name tag", icon: "nameTag", shape: Some(Shape::NameTag), sketch: false },
+        LibraryItem { label: "Icon tag", icon: "iconTag", shape: None, sketch: false },
+        LibraryItem { label: "QR code", icon: "qrCode", shape: None, sketch: false },
+        LibraryItem { label: "Thread", icon: "thread", shape: None, sketch: false },
+        LibraryItem { label: "Screw", icon: "thread", shape: None, sketch: false },
+        LibraryItem { label: "Nut", icon: "thread", shape: None, sketch: false },
+        LibraryItem { label: "Spring", icon: "spring", shape: None, sketch: false },
+        LibraryItem { label: "Gridfinity", icon: "gridfinity", shape: None, sketch: false },
+        LibraryItem { label: "Gear", icon: "gear", shape: None, sketch: false },
+        LibraryItem { label: "Knurl", icon: "knurl", shape: None, sketch: false },
+        LibraryItem { label: "Hinge", icon: "hinge", shape: None, sketch: false },
+        LibraryItem { label: "Dovetail", icon: "dovetail", shape: None, sketch: false },
+        LibraryItem { label: "Star", icon: "star", shape: Some(Shape::Star), sketch: false },
+        LibraryItem { label: "Heart", icon: "heart", shape: Some(Shape::Heart), sketch: false },
+        LibraryItem { label: "Crescent", icon: "crescent", shape: None, sketch: false },
+        LibraryItem { label: "Ruler", icon: "ruler", shape: None, sketch: false },
+    ]
 }
 
 fn shape_icon_key(shape: Shape) -> &'static str {

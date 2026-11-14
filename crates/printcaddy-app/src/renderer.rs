@@ -31,13 +31,15 @@ uniform vec3 u_color;
 uniform float u_selected;
 uniform float u_alpha;
 uniform float u_clip_y;
+uniform float u_unlit;
 out vec4 frag;
 void main() {
     if (v_y > u_clip_y) discard;
     vec3 n = normalize(v_n);
     float key = clamp(dot(n, normalize(vec3(0.35, 0.92, 0.22))), 0.0, 1.0);
     float fill = clamp(dot(n, normalize(vec3(-0.45, 0.15, -0.55))), 0.0, 1.0);
-    vec3 color = u_color * (0.34 + 0.58 * key + 0.16 * fill);
+    vec3 lit = u_color * (0.34 + 0.58 * key + 0.16 * fill);
+    vec3 color = mix(lit, u_color, u_unlit);
     color = mix(color, vec3(0.55, 0.86, 1.0), u_selected * 0.42);
     frag = vec4(color, u_alpha);
 }
@@ -181,8 +183,11 @@ fn paint(
         let sel_loc = gl.get_uniform_location(gpu.mesh_program, "u_selected");
         let alpha_loc = gl.get_uniform_location(gpu.mesh_program, "u_alpha");
         let clip_loc = gl.get_uniform_location(gpu.mesh_program, "u_clip_y");
+        let unlit_loc = gl.get_uniform_location(gpu.mesh_program, "u_unlit");
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
         gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
+        gl.disable(glow::CULL_FACE);
+        gl.uniform_1_f32(unlit_loc.as_ref(), 1.0);
         for object in frame.objects.iter().filter(|object| object.id >= PLATE_MESH_ID) {
             let Some(mesh) = gpu.meshes.get(&object.id) else {
                 continue;
@@ -207,8 +212,10 @@ fn paint(
         gl.draw_arrays(glow::LINES, 0, gpu.grid_count);
 
         gl.use_program(Some(gpu.mesh_program));
+        gl.enable(glow::CULL_FACE);
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
         gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
+        gl.uniform_1_f32(unlit_loc.as_ref(), 0.0);
         for transparent in [false, true] {
             if transparent {
                 gl.enable(glow::BLEND);

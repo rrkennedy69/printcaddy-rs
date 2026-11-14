@@ -1,5 +1,20 @@
 # Parity
 
+Round C makes the build plate a solid grey bed and opens the full basic shape library.
+
+| Item | Status |
+| --- | --- |
+| Plate fill | The bed is flat grey, about rgb(180, 185, 190), the same family as the live plate. It is no longer a white field with only dark lines. |
+| Grid | Fine lines are lighter than the bed. Major lines and the border are darker. The live grid is still a little finer and softer. |
+| Camera | At 1440×900 the plate covers roughly the same screen area as the live editor (from just under the ribbon to the bottom edge). The corner the camera looks from is still a little different. |
+| Rulers | Red and green 10 mm numbers sit on the plate edges. The live ruler is a printed scale with smaller ticks. |
+| Shape library | Shapes opens a four-column BASIC SHAPES grid in the live order, using the live grey pictures. A shape this port cannot build is still shown. Clicking it says it is not in this build yet. |
+| Inspector | Still the right-hand number and colour panel. It does not yet match the live inspector. |
+
+Shapes shown but not built: Loft, Vase, Bent tube, Counterbore, Countersink, Teardrop hole, Icon tag, QR code, Thread, Screw, Nut, Spring, Gridfinity, Gear (no separate picture in the icon set), Knurl, Hinge, Dovetail, Crescent, Ruler. Sketch is in the grid and starts sketch mode. Gear has no picture of its own.
+
+Shots: `docs/shots/parity/rust-c-editor.png`, `rust-c-shapes.png`, `rust-c-ipad.png` (Chromium iPad emulation). `live-before-editor.png` and `live-before-shapes.png` are the TypeScript app.
+
 Round B (14 Nov 2026) rebuilds the main editor chrome so a 1440×900 window uses the live app's icon ribbon, header, left rail, grey ruled plate, and bottom bar. Shots: `docs/shots/parity/rust-b-editor.png`, `rust-b-shapes.png`, `rust-b-ipad.png` (Chromium iPad emulation, not a physical iPad). `live-before-editor.png` is the TypeScript editor.
 
 ## Round B

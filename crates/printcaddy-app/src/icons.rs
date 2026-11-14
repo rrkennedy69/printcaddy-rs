@@ -44,9 +44,9 @@ impl IconSet {
             "wedge",
         ];
         Self {
-            toolbar: load_map(ctx, "toolbar", &toolbar_names, icon_bytes::toolbar),
-            rail: load_map(ctx, "rail", &rail_names, icon_bytes::rail),
-            shapes: load_map(ctx, "shape", &shape_names, icon_bytes::shape),
+            toolbar: load_map(ctx, "toolbar", &toolbar_names, icon_bytes::toolbar, false),
+            rail: load_map(ctx, "rail", &rail_names, icon_bytes::rail, false),
+            shapes: load_map(ctx, "shape", &shape_names, icon_bytes::shape, true),
             logo: ctx.load_texture(
                 "logo",
                 decode_color(icon_bytes::logo()),
@@ -61,13 +61,14 @@ fn load_map(
     prefix: &str,
     names: &[&'static str],
     bytes_of: fn(&str) -> Option<&'static [u8]>,
+    keep_color: bool,
 ) -> HashMap<&'static str, TextureHandle> {
     let mut map = HashMap::new();
     for name in names {
         let Some(bytes) = bytes_of(name) else {
             continue;
         };
-        let image = decode(bytes);
+        let image = if keep_color { decode_color(bytes) } else { decode(bytes) };
         let handle = ctx.load_texture(
             format!("{prefix}-{name}"),
             image,
