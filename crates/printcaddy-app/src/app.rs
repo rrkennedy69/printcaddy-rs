@@ -111,6 +111,8 @@ pub struct PrintCaddyApp {
     show_rulers: bool,
     show_grid: bool,
     snap_step: f32,
+    keep_proportions: bool,
+    saved_sizes: Vec<(Shape, f32, f32, f32)>,
     notice: String,
     theme: ThemeId,
     mobile: bool,
@@ -190,6 +192,8 @@ impl PrintCaddyApp {
             show_rulers: true,
             show_grid: true,
             snap_step: DEFAULT_SNAP_MM,
+            keep_proportions: false,
+            saved_sizes: Vec::new(),
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
                     .into(),
@@ -1201,18 +1205,91 @@ impl PrintCaddyApp {
         }
     }
 
-    fn properties(&mut self, ui: &mut egui::Ui) {
+    fn inspector_body(&mut self, ui: &mut egui::Ui) {
+        if self.sketching {
+            self.sketch_controls(ui);
+            ui.separator();
+        }
         let Some(id) = self.doc.selection() else {
-            ui.label("Nothing selected");
+            if self.show_colour {
+                self.colour_picker(ui);
+            }
             return;
         };
         let Some(object) = self.doc.object(id).cloned() else {
             return;
         };
-        ui.label(format!("Selected: {}", object.name));
+        let orange = Color32::from_rgb(196, 112, 42);
+        let card = egui::Frame::NONE
+            .fill(Color32::WHITE)
+            .corner_radius(10.0)
+            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(232, 222, 208)))
+            .inner_margin(egui::Margin::same(8));
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("⌃").color(chrome::MUTED));
+            let mut name = object.name.clone();
+            let edited = ui.add(
+                egui::TextEdit::singleline(&mut name)
+                    .desired_width(120.0)
+                    .font(egui::TextStyle::Heading),
+            );
+            if edited.changed() {
+                if let Some(body) = self.doc.object_mut(id) {
+                    body.name = name;
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let hidden = object.hidden;
+                if ui
+                    .button(if hidden { "Show" } else { "Hide" })
+                    .on_hover_text("Hide or show this body")
+                    .clicked()
+                {
+                    if let Some(body) = self.doc.object_mut(id) {
+                        body.hidden = !hidden;
+                    }
+                }
+                let locked = object.locked;
+                if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+                    if let Some(body) = self.doc.object_mut(id) {
+                        body.locked = !locked;
+                    }
+                }
+            });
+        });
+        ui.add_space(4.0);
+        card.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if mode_chip(ui, object.color, "Solid", "(S)", !object.hole, orange).clicked() {
+                    self.doc.set_hole(id, false);
+                }
+                ui.add_space(12.0);
+                if mode_chip(ui, object.color, "Hole", "(H)", object.hole, orange).clicked() {
+                    self.doc.set_hole(id, true);
+                }
+            });
+            let mut transparent = object.transparent;
+            if ui.checkbox(&mut transparent, "Transparent (T)").changed() {
+                if let Some(body) = self.doc.object_mut(id) {
+                    body.transparent = transparent;
+                    body.revision = body.revision.saturating_add(1);
+                }
+            }
+        });
+        ui.add_space(6.0);
+        card.show(ui, |ui| {
+            ui.add_enabled_ui(false, |ui| {
+                ui.label("Surface texture");
+                ui.label(egui::RichText::new("Texture mask    Not a mask").color(chrome::MUTED));
+            });
+            ui.small("Surface texture is not in this build yet.");
+        });
+        ui.add_space(6.0);
         let (width0, depth0, height0) = object.size();
         let unit = if self.inches { 25.4 } else { 1.0 };
         let unit_name = if self.inches { "in" } else { "mm" };
+        let round = if self.inches { 3 } else { 2 };
         let mut position = object.position / unit;
         let mut rotation = object.rotation;
         let mut width = width0 / unit;
@@ -1220,21 +1297,82 @@ impl PrintCaddyApp {
         let mut height = height0 / unit;
         let mut pose = false;
         let mut sized = false;
-        ui.label(format!("Position ({unit_name})"));
-        pose |= number(ui, "X", &mut position.x);
-        pose |= number(ui, "Y", &mut position.y);
-        pose |= number(ui, "Z", &mut position.z);
-        ui.label("Rotation (degrees)");
-        pose |= number(ui, "Rot X", &mut rotation.x);
-        pose |= number(ui, "Rot Y", &mut rotation.y);
-        pose |= number(ui, "Rot Z", &mut rotation.z);
-        ui.label(format!("Size ({unit_name})"));
-        sized |= number(ui, "Width", &mut width);
-        sized |= number(ui, "Depth", &mut depth);
-        sized |= number(ui, "Height", &mut height);
-        self.shape_fields(ui, id, &object);
+        let cylinder = matches!(
+            object.kind,
+            printcaddy_core::ObjectKind::Cylinder { .. }
+        );
+        card.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Properties").strong().color(chrome::INK));
+            });
+            ui.checkbox(&mut self.keep_proportions, "Keep proportions");
+            if cylinder {
+                sized |= dim_row(ui, "Diameter", &mut width, unit_name, round, orange);
+                sized |= dim_row(ui, "Height", &mut height, unit_name, round, orange);
+                depth = width;
+            } else {
+                sized |= dim_row(ui, "Length", &mut width, unit_name, round, orange);
+                sized |= dim_row(ui, "Width", &mut depth, unit_name, round, orange);
+                sized |= dim_row(ui, "Height", &mut height, unit_name, round, orange);
+            }
+            self.shape_fields(ui, id, &object);
+            ui.horizontal(|ui| {
+                if ui.button("Save as default").clicked() {
+                    let shape = object.shape();
+                    let size = (width0, depth0, height0);
+                    if let Some(shape) = shape {
+                        if let Some(slot) = self.saved_sizes.iter_mut().find(|(kind, ..)| *kind == shape) {
+                            *slot = (shape, size.0, size.1, size.2);
+                        } else {
+                            self.saved_sizes.push((shape, size.0, size.1, size.2));
+                        }
+                        self.notice = format!("Saved the default size for {}.", shape.label());
+                    }
+                }
+                if ui.button("Reset defaults").clicked() {
+                    if let Some(shape) = object.shape() {
+                        self.saved_sizes.retain(|(kind, ..)| *kind != shape);
+                        let (w, d, h) = shape.default_size();
+                        self.history.begin(&self.doc);
+                        self.doc.set_size(id, w, d, h);
+                        self.history.end();
+                        self.notice = "Reset to the library size.".into();
+                    }
+                }
+            });
+        });
+        ui.add_space(6.0);
+        card.show(ui, |ui| {
+            ui.label(egui::RichText::new("Position").strong().color(chrome::INK));
+            pose |= number(ui, "X", &mut position.x);
+            pose |= number(ui, "Y", &mut position.y);
+            pose |= number(ui, "Z", &mut position.z);
+        });
+        ui.add_space(6.0);
+        card.show(ui, |ui| {
+            ui.label(egui::RichText::new("Rotation").strong().color(chrome::INK));
+            pose |= number(ui, "X", &mut rotation.x);
+            pose |= number(ui, "Y", &mut rotation.y);
+            pose |= number(ui, "Z", &mut rotation.z);
+        });
         if (pose || sized) && !self.history.is_open() {
             self.history.begin(&self.doc);
+        }
+        if self.keep_proportions && sized {
+            let (lw, ld, lh) = (width0 / unit, depth0 / unit, height0 / unit);
+            if lw > 0.01 && (width - lw).abs() > 1e-4 {
+                let scale = width / lw;
+                depth = ld * scale;
+                height = lh * scale;
+            } else if ld > 0.01 && (depth - ld).abs() > 1e-4 {
+                let scale = depth / ld;
+                width = lw * scale;
+                height = lh * scale;
+            } else if lh > 0.01 && (height - lh).abs() > 1e-4 {
+                let scale = height / lh;
+                width = lw * scale;
+                depth = ld * scale;
+            }
         }
         if pose {
             self.doc.set_position(id, position * unit);
@@ -1246,6 +1384,28 @@ impl PrintCaddyApp {
                 || (height - height0 / unit).abs() > 1e-4)
         {
             self.doc.set_size(id, width * unit, depth * unit, height * unit);
+        }
+        if self.show_colour {
+            ui.add_space(6.0);
+            card.show(ui, |ui| {
+                ui.label(egui::RichText::new("Colour").strong().color(chrome::INK));
+                self.colour_picker(ui);
+            });
+        } else if ui.button("Colour").clicked() {
+            self.show_colour = true;
+        }
+        if !self.simple {
+            ui.horizontal(|ui| {
+                if ui.button("Fillet box").clicked() {
+                    self.apply_fillet();
+                }
+                if ui.button("Edit sketch").clicked() {
+                    self.edit_selected_sketch();
+                }
+                if ui.button("Export STL").clicked() {
+                    self.export();
+                }
+            });
         }
     }
 }
@@ -1322,48 +1482,6 @@ impl eframe::App for PrintCaddyApp {
             });
         for cmd in commands {
             self.apply_chrome(cmd);
-        }
-
-        let show_inspector = self.doc.selection().is_some() || self.show_colour || self.sketching;
-        if show_inspector {
-            egui::SidePanel::right("inspector")
-                .exact_width(if self.mobile { 300.0 } else { 280.0 })
-                .frame(
-                    egui::Frame::NONE
-                        .fill(chrome::PAGE)
-                        .inner_margin(egui::Margin::symmetric(10, 8)),
-                )
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if self.sketching {
-                            self.sketch_controls(ui);
-                        }
-                        if self.show_colour || self.doc.selection().is_some() {
-                            ui.label(egui::RichText::new("Colour").strong().color(chrome::INK));
-                            self.colour_picker(ui);
-                        }
-                        if self.doc.selection().is_some() {
-                            ui.separator();
-                            self.properties(ui);
-                            if !self.simple {
-                                ui.separator();
-                                number(ui, "Fillet", &mut self.fillet_radius);
-                                if ui.button("Fillet box").clicked() {
-                                    self.apply_fillet();
-                                }
-                                if ui.button("Hole").clicked() {
-                                    self.toggle_hole();
-                                }
-                                if ui.button("Export STL").clicked() {
-                                    self.export();
-                                }
-                                if ui.button("Edit sketch").clicked() {
-                                    self.edit_selected_sketch();
-                                }
-                            }
-                        }
-                    });
-                });
         }
 
         let mut view_rect = Rect::NOTHING;
@@ -1480,6 +1598,25 @@ impl eframe::App for PrintCaddyApp {
                     .show(ctx, |ui| {
                         snap_cmd = chrome::snap_bar(ui, self.snap, self.snap_step, self.inches);
                     });
+                if self.doc.selection().is_some() || self.sketching || self.show_colour {
+                    let height = (view_rect.height() - 28.0).max(200.0);
+                    egui::Area::new(egui::Id::new("inspector"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(view_rect.right_top() + egui::vec2(-316.0, 8.0))
+                        .show(ctx, |ui| {
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgb(250, 247, 242))
+                                .corner_radius(14.0)
+                                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(226, 214, 196)))
+                                .inner_margin(egui::Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.set_width(292.0);
+                                    egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+                                        self.inspector_body(ui);
+                                    });
+                                });
+                        });
+                }
             }
             if let Some(cmd) = rail_cmd {
                 self.apply_chrome(cmd);
@@ -1960,6 +2097,9 @@ impl PrintCaddyApp {
             self.history.end();
             self.history.begin(&self.doc);
             let id = self.doc.add_shape(shape);
+            if let Some(&(_, w, d, h)) = self.saved_sizes.iter().find(|(kind, ..)| *kind == shape) {
+                self.doc.set_size(id, w, d, h);
+            }
             let name = self
                 .doc
                 .object(id)
@@ -2823,6 +2963,74 @@ fn library_items() -> &'static [LibraryItem] {
         LibraryItem { label: "Crescent", icon: "crescent", shape: None, sketch: false },
         LibraryItem { label: "Ruler", icon: "ruler", shape: None, sketch: false },
     ]
+}
+
+fn mode_chip(
+    ui: &mut egui::Ui,
+    color: printcaddy_core::Color,
+    title: &str,
+    key: &str,
+    on: bool,
+    orange: Color32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(110.0, 78.0), Sense::click());
+    if on {
+        ui.painter().rect_stroke(
+            rect,
+            10.0,
+            egui::Stroke::new(1.5_f32, orange),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let swatch = egui::Rect::from_center_size(rect.center() - egui::vec2(0.0, 12.0), egui::vec2(36.0, 36.0));
+    let fill = if title == "Hole" {
+        Color32::from_rgb(230, 230, 230)
+    } else {
+        Color32::from_rgb(color.r, color.g, color.b)
+    };
+    ui.painter().rect_filled(swatch, 6.0, fill);
+    ui.painter().rect_stroke(
+        swatch,
+        6.0,
+        egui::Stroke::new(1.0_f32, Color32::from_rgb(180, 170, 156)),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center() + egui::vec2(0.0, 24.0),
+        egui::Align2::CENTER_CENTER,
+        format!("{title} {key}"),
+        egui::FontId::proportional(12.0),
+        if on { orange } else { chrome::INK },
+    );
+    response
+}
+
+fn dim_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    unit: &str,
+    decimals: usize,
+    orange: Color32,
+) -> bool {
+    let before = *value;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(chrome::INK));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(unit).color(chrome::MUTED));
+            ui.add(
+                egui::DragValue::new(value)
+                    .speed(0.1)
+                    .fixed_decimals(decimals)
+                    .range(0.01..=400.0),
+            );
+        });
+    });
+    let max = (*value * 4.0).max(80.0);
+    ui.add(egui::Slider::new(value, 0.2..=max).show_value(false).trailing_fill(true));
+    ui.visuals_mut().widgets.inactive.bg_fill = orange;
+    let _ = orange;
+    (*value - before).abs() > 1e-4
 }
 
 fn shape_icon_key(shape: Shape) -> &'static str {

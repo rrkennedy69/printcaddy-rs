@@ -97,6 +97,12 @@ pub struct Object {
     /// A locked body cannot be selected. A locked plate sets this on the bodies sitting on it.
     #[serde(default)]
     pub locked: bool,
+    /// Drawn see-through, without becoming a cutter.
+    #[serde(default)]
+    pub transparent: bool,
+    /// Hidden from the view. The selection can still show its inspector.
+    #[serde(default)]
+    pub hidden: bool,
     /// Bambu material and colour name, when the body was painted from the filament list.
     #[serde(default)]
     pub filament: Option<crate::bambu::FilamentRef>,
@@ -779,8 +785,13 @@ impl Document {
     }
 
     pub fn display_alpha(&self, id: ObjectId) -> f32 {
-        if self.object(id).is_some_and(|object| object.hole) {
+        let Some(object) = self.object(id) else {
+            return 1.0;
+        };
+        if object.hole {
             0.38
+        } else if object.transparent {
+            0.45
         } else {
             1.0
         }
@@ -790,7 +801,8 @@ impl Document {
         let Some(object) = self.object(id) else {
             return false;
         };
-        if self.hidden_by_cut(id) {
+        let hidden = object.hidden;
+        if hidden || self.hidden_by_cut(id) {
             return false;
         }
         if let ObjectKind::Group { cut: None, .. } = &object.kind {
@@ -1202,6 +1214,8 @@ impl Document {
             hole: false,
             parent: None,
             locked: false,
+            transparent: false,
+            hidden: false,
             filament: None,
         });
         id
@@ -1293,6 +1307,8 @@ impl Document {
             hole: false,
             parent: None,
             locked: false,
+            transparent: false,
+            hidden: false,
             filament: None,
         });
         self.selection.clear();

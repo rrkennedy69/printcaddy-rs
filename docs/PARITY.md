@@ -1,5 +1,22 @@
 # Parity
 
+Round D replaces the right-hand number column with a floating inspector that follows the live panel.
+
+| Item | Status |
+| --- | --- |
+| Inspector place | A card floats on the right of the view, over the plate, instead of a side column. |
+| Name | The body name is an editable field at the top. |
+| Solid / Hole | Two chips. Solid shows the body colour. Hole marks the body as a cutter. |
+| Transparent | A checkbox. The body is drawn see-through and is not a cutter. |
+| Lock / Hide | Lock keeps the body from being selected. Hide takes it out of the view. |
+| Surface texture and texture mask | Shown, and disabled. They are not built. |
+| Properties | Keep proportions, then Length, Width, and Height with a number and a slider. A cylinder uses Diameter and Height. Units follow mm/in. |
+| Save as default / Reset defaults | Save remembers that size for the next body of the same shape. Reset restores the library size. |
+| Position and Rotation | X Y Z fields, in millimetres or inches, and degrees. |
+| Rulers and camera | Unchanged this round. The red and green numbers are still not the live printed scale. |
+
+Shots: `docs/shots/parity/live-d-inspector.png`, `rust-d-inspector.png` (an ellipse, same panel), `rust-d-editor.png`, `rust-d-ipad.png` (Chromium iPad emulation).
+
 Round C makes the build plate a solid grey bed and opens the full basic shape library.
 
 | Item | Status |
