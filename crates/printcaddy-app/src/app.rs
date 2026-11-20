@@ -1579,6 +1579,7 @@ impl eframe::App for PrintCaddyApp {
                         rect,
                         &centers,
                         &self.project_name,
+                        self.inches,
                     );
                 }
             });

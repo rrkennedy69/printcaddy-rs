@@ -573,7 +573,74 @@ pub fn hit_cube(centers: &[(CubeTarget, Pos2)], pointer: Pos2) -> Option<CubeTar
     best.map(|(_, _, target)| target)
 }
 
-/// Numbered ticks along the near edges of each plate, plus the design name on the bed.
+/// Numbers lie flat on the plate, reading along +X, with the tops toward −Z.
+fn paint_flat_label(
+    painter: &egui::Painter,
+    camera: &Camera,
+    aspect: f32,
+    rect: Rect,
+    at: Vec3,
+    text: &str,
+    ink: Color32,
+    text_size: f32,
+) {
+    let Some(center) = project(camera, aspect, rect, at) else {
+        return;
+    };
+    let Some(right) = project(camera, aspect, rect, at + Vec3::X) else {
+        return;
+    };
+    let Some(up) = project(camera, aspect, rect, at + Vec3::new(0.0, 0.0, -1.0)) else {
+        return;
+    };
+    let right_px = right - center;
+    let up_px = up - center;
+    let px_per_mm = up_px.length();
+    if px_per_mm < 0.05 || right_px.length() < 0.05 {
+        return;
+    }
+    // The live texture is 48px of a 64px canvas mapped onto a plane `text_size` tall.
+    let font_px = text_size * (48.0 / 64.0) * px_per_mm;
+    if !(3.0..=160.0).contains(&font_px) {
+        return;
+    }
+    let galley = painter.layout_no_wrap(text.to_string(), egui::FontId::proportional(font_px), ink);
+    let mut angle = right_px.y.atan2(right_px.x);
+    let text_up = Vec2::new(angle.sin(), -angle.cos());
+    if text_up.dot(up_px) < 0.0 {
+        angle += std::f32::consts::PI;
+    }
+    let local = galley.rect.center().to_vec2();
+    let (c, s) = (angle.cos(), angle.sin());
+    let rotated = Vec2::new(c * local.x - s * local.y, s * local.x + c * local.y);
+    let mut shape = egui::epaint::TextShape::new(center - rotated, galley, ink);
+    shape.angle = angle;
+    painter.add(shape);
+}
+
+fn paint_tick(
+    painter: &egui::Painter,
+    camera: &Camera,
+    aspect: f32,
+    rect: Rect,
+    outer: Vec3,
+    inner: Vec3,
+    ink: Color32,
+) {
+    let (Some(a), Some(b)) = (
+        project(camera, aspect, rect, outer),
+        project(camera, aspect, rect, inner),
+    ) else {
+        return;
+    };
+    painter.line_segment([a, b], Stroke::new(1.0_f32, ink));
+}
+
+/// Printed scale on the front (X, red numbers) and left (Y, green numbers) edges.
+///
+/// Matches the live `createPlateRulers`: 1 mm ticks (5 mm mid, 10 mm major),
+/// or eighth-inch ticks when the display unit is inches. Tick ink is the live
+/// light-theme line colour. Numbers use the X and Y axis colours.
 pub fn paint_rulers(
     painter: &egui::Painter,
     camera: &Camera,
@@ -581,34 +648,78 @@ pub fn paint_rulers(
     rect: Rect,
     centers: &[(f32, f32)],
     design: &str,
+    inches: bool,
 ) {
     let half = PLATE_SIZE_MM * 0.5;
-    let red = Color32::from_rgb(176, 64, 52);
-    let green = Color32::from_rgb(46, 130, 72);
+    let base = (PLATE_SIZE_MM / 120.0).max(1.2);
+    let minor = base;
+    let mid_len = base * 1.8;
+    let major = base * 2.8;
+    let text_size = base * 2.4;
+    let y = 0.35;
+    let tick_ink = Color32::from_rgba_unmultiplied(0x2b, 0x3a, 0x44, 217);
+    let x_ink = Color32::from_rgb(0xe5, 0x48, 0x4d);
+    let y_ink = Color32::from_rgb(0x3f, 0xae, 0x5a);
+    let (step, every, mid_every) = if inches {
+        (25.4 / 8.0, 8, 4)
+    } else {
+        (1.0, 10, 5)
+    };
+    let count = (PLATE_SIZE_MM / step + 1.0e-4).floor() as i32;
     for &(ox, oz) in centers {
-        for step in 1..=12 {
-            let mark = step as f32 * 10.0;
-            if mark > half - 2.0 {
-                break;
-            }
-            let x_at = Vec3::new(ox - half + mark, 0.6, oz + half - 8.0);
-            if let Some(screen) = project(camera, aspect, rect, x_at) {
-                painter.text(
-                    screen,
-                    egui::Align2::CENTER_TOP,
-                    format!("{}", step * 10),
-                    egui::FontId::proportional(10.0),
-                    red,
+        for i in 0..=count {
+            let d = i as f32 * step;
+            let len = if i % every == 0 {
+                major
+            } else if i % mid_every == 0 {
+                mid_len
+            } else {
+                minor
+            };
+            let x_outer = Vec3::new(ox - half + d, y, oz + half);
+            paint_tick(
+                painter,
+                camera,
+                aspect,
+                rect,
+                x_outer,
+                x_outer + Vec3::new(0.0, 0.0, -len),
+                tick_ink,
+            );
+            if i % every == 0 {
+                let n = if inches { i as f32 / 8.0 } else { i as f32 };
+                paint_flat_label(
+                    painter,
+                    camera,
+                    aspect,
+                    rect,
+                    Vec3::new(x_outer.x, y, oz + half + text_size * 0.75),
+                    &format!("{}", n.round() as i32),
+                    x_ink,
+                    text_size,
                 );
             }
-            let z_at = Vec3::new(ox - half + 8.0, 0.6, oz - half + mark);
-            if let Some(screen) = project(camera, aspect, rect, z_at) {
-                painter.text(
-                    screen,
-                    egui::Align2::RIGHT_CENTER,
-                    format!("{}", step * 10),
-                    egui::FontId::proportional(10.0),
-                    green,
+            let z_outer = Vec3::new(ox - half, y, oz + half - d);
+            paint_tick(
+                painter,
+                camera,
+                aspect,
+                rect,
+                z_outer,
+                z_outer + Vec3::new(len, 0.0, 0.0),
+                tick_ink,
+            );
+            if i % every == 0 && i != 0 {
+                let n = if inches { i as f32 / 8.0 } else { i as f32 };
+                paint_flat_label(
+                    painter,
+                    camera,
+                    aspect,
+                    rect,
+                    Vec3::new(ox - half - text_size * 1.1, y, z_outer.z),
+                    &format!("{}", n.round() as i32),
+                    y_ink,
+                    text_size,
                 );
             }
         }

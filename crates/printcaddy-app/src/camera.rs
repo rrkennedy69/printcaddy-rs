@@ -1,4 +1,5 @@
 use glam::{Mat4, Vec3};
+use printcaddy_core::PLATE_SIZE_MM;
 
 /// Orbit camera looking at a point on the build plate. Y is up.
 #[derive(Clone, Debug)]
@@ -11,11 +12,15 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
+        // Live editor home is (118, 96, 118) looking at the origin, for a 200 mm bed.
+        // This bed is larger, so the same angle and the same framing scale that offset.
+        let home = Vec3::new(118.0, 96.0, 118.0) * (PLATE_SIZE_MM / 200.0);
+        let distance = home.length();
         Self {
             target: Vec3::ZERO,
-            yaw: 0.78,
-            pitch: 0.70,
-            distance: 230.0,
+            yaw: home.x.atan2(home.z),
+            pitch: (home.y / distance).asin(),
+            distance,
         }
     }
 }
@@ -38,7 +43,8 @@ impl Camera {
         } else {
             1.0
         };
-        Mat4::perspective_rh(50.0_f32.to_radians(), aspect, 0.5, 8000.0)
+        // Live CAMERA_FOV is 38 degrees, measured vertically.
+        Mat4::perspective_rh(38.0_f32.to_radians(), aspect, 0.5, 8000.0)
     }
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {

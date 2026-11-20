@@ -1,5 +1,13 @@
 # Parity
 
+Round E matches the live edge rulers and the home camera.
+
+The rulers are the live printed scale. In millimetres the ticks are every 1 mm, taller at 5 mm, and tallest at 10 mm. The front edge is numbered in red (`#e5484d`) and the left edge in green (`#3fae5a`). The tick lines are the live dark grey. Inches use eighth-inch ticks and whole-inch numbers. A fresh load and Home use the live view: from `(118, 96, 118)` toward the origin, 38° vertical field. The live default bed is 200 mm and this bed is 256 mm, so that offset is multiplied by 256/200 and the plate fills the window the same way.
+
+Still different after this round: the axis arrows stay in the middle of the plate, the bed is 256 mm rather than 200 mm, and the numbers are screen text lying on the plate rather than textures painted on it.
+
+Shot: `docs/shots/parity/rust-e-editor.png` (on load, 1440×900).
+
 Round D replaces the right-hand number column with a floating inspector that follows the live panel.
 
 | Item | Status |
