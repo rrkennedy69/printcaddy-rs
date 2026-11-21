@@ -157,6 +157,15 @@ pub struct PrintCaddyApp {
     show_hide_menu: bool,
     gravity: bool,
     lay_flat: bool,
+    show_mirror: bool,
+    show_pattern: bool,
+    show_chamfer: bool,
+    show_hollow: bool,
+    show_split: bool,
+    pattern_count: u32,
+    pattern_spacing: glam::Vec3,
+    chamfer_mm: f32,
+    hollow_mm: f32,
 }
 
 impl PrintCaddyApp {
@@ -246,6 +255,15 @@ impl PrintCaddyApp {
             show_hide_menu: false,
             gravity: false,
             lay_flat: false,
+            show_mirror: false,
+            show_pattern: false,
+            show_chamfer: false,
+            show_hollow: false,
+            show_split: false,
+            pattern_count: 4,
+            pattern_spacing: glam::Vec3::new(25.0, 0.0, 0.0),
+            chamfer_mm: 2.0,
+            hollow_mm: 2.0,
         }
     }
 
@@ -1661,6 +1679,11 @@ impl eframe::App for PrintCaddyApp {
         self.object_list_window(ctx);
         self.align_window(ctx);
         self.hide_menu(ctx);
+        self.mirror_window(ctx);
+        self.pattern_window(ctx);
+        self.chamfer_window(ctx);
+        self.hollow_window(ctx);
+        self.split_window(ctx);
         self.shortcuts_window(ctx);
         self.plate_tiles(ctx, view_rect);
         self.projects_window(ctx);
@@ -1932,6 +1955,170 @@ impl PrintCaddyApp {
         }
     }
 
+    fn mirror_window(&mut self, ctx: &egui::Context) {
+        if !self.show_mirror {
+            return;
+        }
+        let mut open = true;
+        let mut axis = None;
+        egui::Window::new("Mirror")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
+            .show(ctx, |ui| {
+                ui.label("Reflect the selection across its own centre.");
+                ui.horizontal(|ui| {
+                    if ui.button("X").clicked() {
+                        axis = Some(AlignAxis::X);
+                    }
+                    if ui.button("Y").clicked() {
+                        axis = Some(AlignAxis::Y);
+                    }
+                    if ui.button("Z").clicked() {
+                        axis = Some(AlignAxis::Z);
+                    }
+                });
+            });
+        self.show_mirror = open;
+        if let Some(axis) = axis {
+            self.step("Mirror");
+            let moved = self.doc.mirror_selection(axis);
+            self.history.end();
+            self.show_mirror = false;
+            self.notice = format!("Mirrored {moved}.");
+        }
+    }
+
+    fn pattern_window(&mut self, ctx: &egui::Context) {
+        if !self.show_pattern {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Pattern")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(40.0, 80.0))
+            .show(ctx, |ui| {
+                ui.label("Repeat the selection. The count includes the original.");
+                let mut count = self.pattern_count as f32;
+                ui.horizontal(|ui| {
+                    ui.label("Count");
+                    ui.add(egui::DragValue::new(&mut count).range(2.0..=100.0).speed(1.0));
+                });
+                self.pattern_count = count.round() as u32;
+                ui.horizontal(|ui| {
+                    ui.label("Spacing X Y Z");
+                    ui.add(egui::DragValue::new(&mut self.pattern_spacing.x).speed(0.5));
+                    ui.add(egui::DragValue::new(&mut self.pattern_spacing.y).speed(0.5));
+                    ui.add(egui::DragValue::new(&mut self.pattern_spacing.z).speed(0.5));
+                });
+                ui.small("X right, Y up, Z. A negative spacing runs the other way.");
+                apply = ui.button("Create").clicked();
+            });
+        self.show_pattern = open;
+        if apply {
+            self.step("Pattern");
+            let n = self.doc.pattern_row(self.pattern_count, self.pattern_spacing);
+            self.history.end();
+            self.show_pattern = false;
+            self.notice = format!("Added {} copies.", n.len());
+        }
+    }
+
+    fn chamfer_window(&mut self, ctx: &egui::Context) {
+        if !self.show_chamfer {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Chamfer")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(-40.0, 80.0))
+            .show(ctx, |ui| {
+                ui.label("Bevel the top edges of each selected box.");
+                ui.horizontal(|ui| {
+                    ui.label("Distance mm");
+                    ui.add(egui::DragValue::new(&mut self.chamfer_mm).range(0.2..=20.0).speed(0.1));
+                });
+                apply = ui.button("Chamfer").clicked();
+            });
+        self.show_chamfer = open;
+        if apply {
+            self.step("Chamfer");
+            let n = self.doc.chamfer_selection(self.chamfer_mm);
+            self.history.end();
+            self.show_chamfer = false;
+            self.notice = if n == 0 {
+                "Chamfer in this build works on boxes.".into()
+            } else {
+                format!("Chamfered {n}.")
+            };
+        }
+    }
+
+    fn hollow_window(&mut self, ctx: &egui::Context) {
+        if !self.show_hollow {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Hollow")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 110.0))
+            .show(ctx, |ui| {
+                ui.label("Walls and a floor, open at the top. Boxes only.");
+                ui.horizontal(|ui| {
+                    ui.label("Wall mm");
+                    ui.add(egui::DragValue::new(&mut self.hollow_mm).range(0.4..=20.0).speed(0.1));
+                });
+                apply = ui.button("Hollow").clicked();
+            });
+        self.show_hollow = open;
+        if apply {
+            self.step("Hollow");
+            let n = self.doc.hollow_selection(self.hollow_mm);
+            self.history.end();
+            self.show_hollow = false;
+            self.notice = if n == 0 {
+                "Hollow in this build works on boxes, with a wall thinner than the body.".into()
+            } else {
+                format!("Hollowed {n}.")
+            };
+        }
+    }
+
+    fn split_window(&mut self, ctx: &egui::Context) {
+        if !self.show_split {
+            return;
+        }
+        let mut open = true;
+        let mut axis = None;
+        egui::Window::new("Split")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(80.0, 80.0))
+            .show(ctx, |ui| {
+                ui.label("Cut each selected body through its centre.");
+                ui.horizontal(|ui| {
+                    if ui.button("X").clicked() {
+                        axis = Some(AlignAxis::X);
+                    }
+                    if ui.button("Y").clicked() {
+                        axis = Some(AlignAxis::Y);
+                    }
+                    if ui.button("Z").clicked() {
+                        axis = Some(AlignAxis::Z);
+                    }
+                });
+            });
+        self.show_split = open;
+        if let Some(axis) = axis {
+            self.step("Split");
+            let n = self.doc.split_selection(axis);
+            self.history.end();
+            self.show_split = false;
+            self.notice = format!("Split {n}.");
+        }
+    }
+
     fn tool_ready(&self, cmd: chrome::Cmd) -> bool {
         let selected = self.doc.selected_ids().len();
         match cmd {
@@ -1946,7 +2133,12 @@ impl PrintCaddyApp {
             | chrome::Cmd::Align
             | chrome::Cmd::Center
             | chrome::Cmd::Drop
-            | chrome::Cmd::LayFlat => selected >= 1,
+            | chrome::Cmd::LayFlat
+            | chrome::Cmd::Mirror
+            | chrome::Cmd::Pattern
+            | chrome::Cmd::Chamfer
+            | chrome::Cmd::Hollow
+            | chrome::Cmd::Split => selected >= 1,
             chrome::Cmd::Paste => !self.clipboard.is_empty(),
             chrome::Cmd::Group | chrome::Cmd::Intersect | chrome::Cmd::CutOut => selected >= 2,
             chrome::Cmd::Ungroup => selected >= 1,
@@ -2076,6 +2268,18 @@ impl PrintCaddyApp {
                     self.notice = "Gravity is off.".into();
                 }
             }
+            chrome::Cmd::Mirror => self.show_mirror = true,
+            chrome::Cmd::Pattern => {
+                self.pattern_count = 4;
+                if let Some(id) = self.doc.selection() {
+                    let (w, _, _) = self.doc.object(id).map(|object| object.size()).unwrap_or((20.0, 20.0, 20.0));
+                    self.pattern_spacing = glam::Vec3::new(((w + 5.0) * 2.0).round() / 2.0, 0.0, 0.0);
+                }
+                self.show_pattern = true;
+            }
+            chrome::Cmd::Chamfer => self.show_chamfer = true,
+            chrome::Cmd::Hollow => self.show_hollow = true,
+            chrome::Cmd::Split => self.show_split = true,
             chrome::Cmd::Guide | chrome::Cmd::Bug | chrome::Cmd::NotBuilt => {
                 self.notice = "That tool is not in this build yet.".into();
             }

@@ -1,5 +1,13 @@
 # Parity
 
+Round H turns on five Modify tools.
+
+Mirror reflects the selection across the centre of its own box, on X, Y, or Z, and keeps the solid facing out. Pattern repeats the selection in a row. The count includes the original. Spacing is in scene millimetres: X to the right, Y up, Z. The default gap is the body's width plus 5 mm, the same starting point as the live row. Chamfer bevels the top edges of a box. Hollow gives a box walls and a floor and leaves the top open. Split cuts a body through its centre into two pieces. Each of these is one undo step.
+
+Not built yet: Pivot, Hole pattern, Offset, Face, Delete face, Simplify, Cookie cutter, and Flexi joints. Chamfer and hollow work on boxes. Pattern does not yet run around a circle or group the copies.
+
+Shots: `docs/shots/parity/rust-h-mirror.png`, `rust-h-pattern.png`, `rust-h-chamfer.png`, `rust-h-hollow.png`.
+
 Round G turns on the live editing tools that were grey.
 
 Copy and paste (Ctrl+C / Ctrl+V) keep a clipboard in the page. Paste moves each body 12 mm in X and Z, and not past 10 mm outside the plate, as one undo step. History lists the steps and a click jumps back to one. The object list selects, renames, locks, and hides. Hide selected opens Hide, Show selected, and Show all. Align lines the other selected bodies up with the last one: left/centre/right, front/middle/back, bottom/middle/top. Centre moves the selection onto the middle of the plate. Drop sets it on the plate or on the solid underneath. Lay flat waits for a click on a face, turns that face down, and drops. Gravity, while on, drops a body at the end of a move. Each of these is one undo step.

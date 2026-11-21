@@ -51,6 +51,10 @@ const EPS: f32 = 0.0005;
 
 impl Document {
     /// Paste stored bodies. Each moves 12 mm in X and Z, and not past 10 mm outside the plate.
+    pub fn place_copy(&mut self, source: &Object, position: Vec3) -> ObjectId {
+        self.allocate_copy(source, position)
+    }
+
     pub fn paste_copies(&mut self, sources: &[Object]) -> Vec<ObjectId> {
         let limit = PLATE_SIZE_MM * 0.5 + 10.0;
         let mut map: HashMap<u64, ObjectId> = HashMap::new();

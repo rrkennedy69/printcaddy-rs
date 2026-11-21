@@ -8,6 +8,7 @@ mod document;
 mod exchange;
 mod history;
 mod mesh;
+mod modify;
 mod plates;
 mod project;
 mod ray;
