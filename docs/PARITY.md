@@ -1,5 +1,13 @@
 # Parity
 
+Round H, third pass, finishes the Modify tools that could be made solid.
+
+Hole pattern cuts the holes out of the body. On a box the result is one closed solid, with no cutter left behind. Chamfer bevels every sharp edge: a box gets all twelve, and a cylinder gets both rims. Split caps the cut, so both pieces are closed. The plane is an axis and a position from 5 to 95, or the face you click. Cookie cutter builds a wall, a cutting edge, and a rim around the outline, mirrored by default, with the live starting sizes (wall 1.2 mm, height 15 mm, rim 4 mm by 2 mm, edge 0.4 mm). Simplify welds corners and then runs the meshoptimizer simplify pass.
+
+Still different: a round top, such as a cylinder, is left unchanged by hole pattern because the hole outline does not close. Chamfer does not wait for you to pick edges; it takes every sharp edge. Split has no tilt sliders and no workplane-align buttons. Cookie cutter follows the convex outline, so it has no inner walls and no bridges. Flexi joints are still grey. Mirror is the live choice of left-right, front-back, or top-bottom through the middle; the live tool has no plane you place.
+
+Shots: `docs/shots/parity/rust-h3-holes.png`, `rust-h3-chamfer.png`, `rust-h3-split.png`, `rust-h3-cookie.png`.
+
 Round H, second pass, adds the rest of the Modify tools that could be made solid.
 
 Pivot: click a face and later rotations turn about that point. A circular pattern uses the same point, or the origin. Hole pattern places staggered round cutters (6 mm, 9 mm apart, 4 mm from the edge). Offset moves the surface along its normal. Face moves the clicked face by the distance in the dialog. Delete face removes the clicked face. Simplify welds corners and drops triangles down to the share you keep. Pattern can run around a circle and groups the pieces when there are more than five. Mirror can keep the original. Split takes a position from 5 to 95, 50 being the centre. Hollow now uses the body's own mesh, not only a fresh box.

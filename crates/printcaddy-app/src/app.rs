@@ -168,11 +168,13 @@ pub struct PrintCaddyApp {
     hollow_mm: f32,
     rotation_pivot: Option<glam::Vec3>,
     pivot_pick: bool,
+    split_pick: bool,
     delete_face: bool,
     push_face: bool,
     show_holes: bool,
     show_offset: bool,
     show_simplify: bool,
+    show_cookie: bool,
     show_face: bool,
     mirror_copy: bool,
     pattern_circle: bool,
@@ -184,6 +186,12 @@ pub struct PrintCaddyApp {
     offset_mm: f32,
     face_mm: f32,
     simplify_ratio: f32,
+    cookie_wall: f32,
+    cookie_height: f32,
+    cookie_rim: f32,
+    cookie_rim_height: f32,
+    cookie_edge: f32,
+    cookie_mirror: bool,
 }
 
 impl PrintCaddyApp {
@@ -284,11 +292,13 @@ impl PrintCaddyApp {
             hollow_mm: 2.0,
             rotation_pivot: None,
             pivot_pick: false,
+            split_pick: false,
             delete_face: false,
             push_face: false,
             show_holes: false,
             show_offset: false,
             show_simplify: false,
+            show_cookie: false,
             show_face: false,
             mirror_copy: false,
             pattern_circle: false,
@@ -300,6 +310,12 @@ impl PrintCaddyApp {
             offset_mm: 1.0,
             face_mm: 5.0,
             simplify_ratio: 0.5,
+            cookie_wall: 1.2,
+            cookie_height: 15.0,
+            cookie_rim: 4.0,
+            cookie_rim_height: 2.0,
+            cookie_edge: 0.4,
+            cookie_mirror: true,
         }
     }
 
@@ -1268,7 +1284,7 @@ impl PrintCaddyApp {
             if let Some(pos) = pointer.interact_pos() {
                 if self.lay_flat {
                     self.finish_lay_flat(rect, pos);
-                } else if self.pivot_pick || self.delete_face || self.push_face {
+                } else if self.pivot_pick || self.split_pick || self.delete_face || self.push_face {
                     self.finish_face_pick(rect, pos);
                 } else {
                     let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
@@ -1725,6 +1741,7 @@ impl eframe::App for PrintCaddyApp {
         self.hole_window(ctx);
         self.offset_window(ctx);
         self.simplify_window(ctx);
+        self.cookie_window(ctx);
         self.face_window(ctx);
         self.shortcuts_window(ctx);
         self.plate_tiles(ctx, view_rect);
@@ -1834,9 +1851,11 @@ impl PrintCaddyApp {
 
     fn finish_face_pick(&mut self, rect: Rect, pos: Pos2) {
         let picking_pivot = self.pivot_pick;
+        let splitting = self.split_pick;
         let deleting = self.delete_face;
         let pushing = self.push_face;
         self.pivot_pick = false;
+        self.split_pick = false;
         self.delete_face = false;
         self.push_face = false;
         let Some(id) = self.doc.selection() else {
@@ -1848,6 +1867,7 @@ impl PrintCaddyApp {
         let Some((point, normal)) = self.doc.face_hit(id, ray) else {
             self.notice = "Click a face of the selected body.".into();
             self.pivot_pick = picking_pivot;
+            self.split_pick = splitting;
             self.delete_face = deleting;
             self.push_face = pushing;
             return;
@@ -1855,6 +1875,14 @@ impl PrintCaddyApp {
         if picking_pivot {
             self.rotation_pivot = Some(point);
             self.notice = "Pivot set. Rotations turn about that face.".into();
+            return;
+        }
+        if splitting {
+            self.step("Split");
+            let n = self.doc.split_on_plane(point, normal);
+            self.history.end();
+            self.show_split = false;
+            self.notice = format!("Split {n} on that face.");
             return;
         }
         if deleting {
@@ -2047,17 +2075,17 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
             .show(ctx, |ui| {
-                ui.label("Reflect the selection across its own centre.");
+                ui.label("Choose an axis through the middle of the selection.");
                 ui.checkbox(&mut self.mirror_copy, "Keep the original");
                 ui.horizontal(|ui| {
-                    if ui.button("X").clicked() {
+                    if ui.button("Left-right").clicked() {
                         axis = Some(AlignAxis::X);
                     }
-                    if ui.button("Y").clicked() {
-                        axis = Some(AlignAxis::Y);
-                    }
-                    if ui.button("Z").clicked() {
+                    if ui.button("Front-back").clicked() {
                         axis = Some(AlignAxis::Z);
+                    }
+                    if ui.button("Top-bottom").clicked() {
+                        axis = Some(AlignAxis::Y);
                     }
                 });
             });
@@ -2129,7 +2157,7 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(-40.0, 80.0))
             .show(ctx, |ui| {
-                ui.label("Bevel the top edges of each selected box.");
+                ui.label("Bevel every sharp edge. A box gets all twelve. A cylinder gets both rims.");
                 ui.horizontal(|ui| {
                     ui.label("Distance mm");
                     ui.add(egui::DragValue::new(&mut self.chamfer_mm).range(0.2..=20.0).speed(0.1));
@@ -2143,7 +2171,7 @@ impl PrintCaddyApp {
             self.history.end();
             self.show_chamfer = false;
             self.notice = if n == 0 {
-                "Chamfer in this build works on boxes.".into()
+                "That body has no sharp edge long enough to chamfer.".into()
             } else {
                 format!("Chamfered {n}.")
             };
@@ -2191,7 +2219,7 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(80.0, 80.0))
             .show(ctx, |ui| {
-                ui.label("Cut each selected body. 50 is through the centre.");
+                ui.label("Cut each selected body. 50 is through the centre. Or lay the plane on a face.");
                 ui.horizontal(|ui| {
                     ui.label("Position");
                     ui.add(egui::Slider::new(&mut self.split_at, 5.0..=95.0).show_value(true));
@@ -2205,6 +2233,13 @@ impl PrintCaddyApp {
                     }
                     if ui.button("Z").clicked() {
                         axis = Some(AlignAxis::Z);
+                    }
+                    if ui.button("On a face").clicked() {
+                        self.split_pick = true;
+                        self.pivot_pick = false;
+                        self.delete_face = false;
+                        self.push_face = false;
+                        self.notice = "Click the face the plane should lie on.".into();
                     }
                 });
             });
@@ -2228,7 +2263,7 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
             .show(ctx, |ui| {
-                ui.label("Staggered round holes through the body. 6 mm, 9 mm apart, 4 mm from the edge.");
+                ui.label("Cuts staggered round holes out of the body. 6 mm, 9 mm apart, 4 mm from the edge.");
                 ui.horizontal(|ui| {
                     ui.label("Size");
                     ui.add(egui::DragValue::new(&mut self.hole_size).range(0.5..=40.0).speed(0.1));
@@ -2304,6 +2339,57 @@ impl PrintCaddyApp {
         }
     }
 
+    fn cookie_window(&mut self, ctx: &egui::Context) {
+        if !self.show_cookie {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Cookie cutter")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 70.0))
+            .show(ctx, |ui| {
+                ui.label("A wall and a rim around the outline. The outline is mirrored so a print cuts the right way round.");
+                ui.horizontal(|ui| {
+                    ui.label("Wall");
+                    ui.add(egui::DragValue::new(&mut self.cookie_wall).range(0.4..=10.0).speed(0.1));
+                    ui.label("Height");
+                    ui.add(egui::DragValue::new(&mut self.cookie_height).range(2.0..=100.0).speed(0.5));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Rim");
+                    ui.add(egui::DragValue::new(&mut self.cookie_rim).range(0.5..=30.0).speed(0.1));
+                    ui.label("Rim height");
+                    ui.add(egui::DragValue::new(&mut self.cookie_rim_height).range(0.4..=20.0).speed(0.1));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Edge");
+                    ui.add(egui::DragValue::new(&mut self.cookie_edge).range(0.0..=10.0).speed(0.1));
+                });
+                ui.checkbox(&mut self.cookie_mirror, "Mirror the outline");
+                apply = ui.button("Create").clicked();
+            });
+        self.show_cookie = open;
+        if apply {
+            self.step("Cookie cutter");
+            let n = self.doc.cookie_cutter(
+                self.cookie_wall,
+                self.cookie_height,
+                self.cookie_rim,
+                self.cookie_rim_height,
+                self.cookie_edge,
+                self.cookie_mirror,
+            );
+            self.history.end();
+            self.show_cookie = false;
+            self.notice = if n == 0 {
+                "Select a shape with an outline on the plate.".into()
+            } else {
+                format!("Cookie cutter made for {n}.")
+            };
+        }
+    }
+
     fn face_window(&mut self, ctx: &egui::Context) {
         if !self.show_face {
             return;
@@ -2356,7 +2442,8 @@ impl PrintCaddyApp {
             | chrome::Cmd::Offset
             | chrome::Cmd::Face
             | chrome::Cmd::DeleteFace
-            | chrome::Cmd::Simplify => selected >= 1,
+            | chrome::Cmd::Simplify
+            | chrome::Cmd::Cookie => selected >= 1,
             chrome::Cmd::Paste => !self.clipboard.is_empty(),
             chrome::Cmd::Group | chrome::Cmd::Intersect | chrome::Cmd::CutOut => selected >= 2,
             chrome::Cmd::Ungroup => selected >= 1,
@@ -2515,6 +2602,7 @@ impl PrintCaddyApp {
                 self.notice = "Delete face: click the face to remove.".into();
             }
             chrome::Cmd::Simplify => self.show_simplify = true,
+            chrome::Cmd::Cookie => self.show_cookie = true,
             chrome::Cmd::Guide | chrome::Cmd::Bug | chrome::Cmd::NotBuilt => {
                 self.notice = "That tool is not in this build yet.".into();
             }

@@ -70,6 +70,31 @@ fn hollow_opens_the_top_and_keeps_a_floor() {
 }
 
 #[test]
+fn split_pieces_are_closed() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    doc.select(Some(id));
+    assert_eq!(doc.split_selection(AlignAxis::X, 0.5), 1);
+    for object in doc.objects() {
+        assert!(printcaddy_core::is_closed(&object.local_mesh()), "{}", object.name);
+    }
+}
+
+#[test]
+fn chamfer_takes_both_rims_off_a_cylinder() {
+    let mut doc = Document::new();
+    let id = doc.add_cylinder();
+    doc.select(Some(id));
+    assert_eq!(doc.chamfer_selection(1.0), 1);
+    let mesh = doc.object(id).unwrap().local_mesh();
+    assert!(printcaddy_core::is_closed(&mesh));
+    let (min, max) = mesh.bounds();
+    let top = mesh.positions.iter().filter(|p| (p[1] - max.y).abs() < 0.05).map(|p| p[0].hypot(p[2])).fold(0.0_f32, f32::max);
+    assert!(top < 9.2, "top radius {top}");
+    assert!((max.y - min.y - 20.0).abs() < 0.2);
+}
+
+#[test]
 fn split_makes_two_pieces_that_share_the_cut() {
     let mut doc = Document::new();
     let id = doc.add_box();
@@ -126,13 +151,46 @@ fn offset_grows_a_box() {
 }
 
 #[test]
+fn cookie_cutter_is_a_closed_wall_around_the_outline() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    doc.select(Some(id));
+    assert_eq!(doc.cookie_cutter(1.2, 15.0, 4.0, 2.0, 0.4, true), 1);
+    let cutter = doc.objects().iter().find(|object| object.name == "Cookie cutter").unwrap();
+    assert!(printcaddy_core::is_closed(&cutter.local_mesh()));
+    let (min, max) = cutter.local_mesh().bounds();
+    assert!(max.x - min.x > 24.0, "width {}", max.x - min.x);
+    assert!((max.y - min.y - 15.0).abs() < 0.2);
+    assert!(mesh_volume(&cutter.local_mesh()).abs() > 100.0);
+}
+
+#[test]
+fn one_hole_subtracts_quickly() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    doc.select(Some(id));
+    let started = std::time::Instant::now();
+    assert_eq!(doc.hole_pattern(6.0, 40.0, 4.0), 1);
+    let elapsed = started.elapsed();
+    eprintln!("one hole {:?}", elapsed);
+    assert!(elapsed.as_millis() < 2000, "{elapsed:?}");
+    assert!(doc.objects().iter().all(|object| !object.hole));
+    assert!(printcaddy_core::is_closed(&doc.object(id).unwrap().local_mesh()));
+}
+
+#[test]
 fn hole_pattern_places_cutters_inside_the_face() {
     let mut doc = Document::new();
     let id = doc.add_box();
     doc.select(Some(id));
+    let full = mesh_volume(&doc.object(id).unwrap().local_mesh()).abs();
     assert_eq!(doc.hole_pattern(6.0, 9.0, 1.0), 1);
-    let holes = doc.objects().iter().filter(|object| object.hole).count();
-    assert!(holes >= 2, "holes {holes}");
+    assert!(doc.objects().iter().all(|object| !object.hole));
+    assert_eq!(doc.objects().len(), 1);
+    let mesh = doc.object(id).unwrap().local_mesh();
+    assert!(printcaddy_core::is_closed(&mesh));
+    let volume = mesh_volume(&mesh).abs();
+    assert!(volume < full * 0.9 && volume > full * 0.4, "volume {volume} full {full}");
 }
 
 #[test]
