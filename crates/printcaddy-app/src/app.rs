@@ -2160,7 +2160,7 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 110.0))
             .show(ctx, |ui| {
-                ui.label("Walls and a floor, open at the top. Boxes only.");
+                ui.label("Walls and a floor, open at the top.");
                 ui.horizontal(|ui| {
                     ui.label("Wall mm");
                     ui.add(egui::DragValue::new(&mut self.hollow_mm).range(0.4..=20.0).speed(0.1));
@@ -2174,7 +2174,7 @@ impl PrintCaddyApp {
             self.history.end();
             self.show_hollow = false;
             self.notice = if n == 0 {
-                "Hollow in this build works on boxes, with a wall thinner than the body.".into()
+                "Hollow needs a wall thinner than the body.".into()
             } else {
                 format!("Hollowed {n}.")
             };

@@ -1,5 +1,5 @@
 use glam::Vec3;
-use printcaddy_core::{mesh_volume, AlignAxis, Document};
+use printcaddy_core::{mesh_volume, AlignAxis, Document, ObjectKind};
 
 #[test]
 fn mirror_flips_a_body_across_the_selection_centre() {
@@ -22,7 +22,11 @@ fn pattern_repeats_along_x_and_keeps_the_original() {
     doc.select(Some(id));
     let created = doc.pattern_row(3, Vec3::new(25.0, 0.0, 0.0));
     assert_eq!(created.len(), 2);
-    let xs: Vec<f32> = [id].into_iter().chain(created).map(|id| doc.object(id).unwrap().position.x).collect();
+    let xs: Vec<f32> = [id]
+        .into_iter()
+        .chain(created)
+        .map(|id| doc.object(id).unwrap().position.x)
+        .collect();
     assert!((xs[1] - xs[0] - 25.0).abs() < 1e-3);
     assert!((xs[2] - xs[0] - 50.0).abs() < 1e-3);
 }
@@ -37,7 +41,10 @@ fn chamfer_lowers_the_top_corners_of_a_box() {
     let mesh = doc.object(id).unwrap().local_mesh();
     let top = mesh.bounds().1.y;
     assert!((top - before).abs() < 1e-3);
-    let inset = mesh.positions.iter().any(|p| (p[1] - before).abs() < 0.05 && p[0].abs() < 9.0);
+    let inset = mesh
+        .positions
+        .iter()
+        .any(|p| (p[1] - before).abs() < 0.05 && p[0].abs() < 9.0);
     assert!(inset, "the top face should be inset");
     assert!(mesh_volume(&mesh).abs() > 0.0);
 }
@@ -56,7 +63,10 @@ fn hollow_opens_the_top_and_keeps_a_floor() {
     };
     let volume = mesh_volume(&mesh).abs();
     let full = full.abs();
-    assert!(volume > 0.0 && volume < full * 0.85, "volume {volume} full {full}");
+    assert!(
+        volume > 0.0 && volume < full * 0.85,
+        "volume {volume} full {full}"
+    );
 }
 
 #[test]
@@ -65,10 +75,18 @@ fn split_makes_two_pieces_that_share_the_cut() {
     let id = doc.add_box();
     doc.select(Some(id));
     assert_eq!(doc.split_selection(AlignAxis::X, 0.5), 1);
-    let names: Vec<_> = doc.objects().iter().map(|object| object.name.as_str()).collect();
+    let names: Vec<_> = doc
+        .objects()
+        .iter()
+        .map(|object| object.name.as_str())
+        .collect();
     assert!(names.iter().any(|name| name.ends_with(" A")));
     assert!(names.iter().any(|name| name.ends_with(" B")));
-    let volume: f32 = doc.objects().iter().map(|object| mesh_volume(&object.local_mesh()).abs()).sum();
+    let volume: f32 = doc
+        .objects()
+        .iter()
+        .map(|object| mesh_volume(&object.local_mesh()).abs())
+        .sum();
     assert!(volume > 1000.0, "volume {volume}");
 }
 
@@ -115,4 +133,85 @@ fn hole_pattern_places_cutters_inside_the_face() {
     assert_eq!(doc.hole_pattern(6.0, 9.0, 1.0), 1);
     let holes = doc.objects().iter().filter(|object| object.hole).count();
     assert!(holes >= 2, "holes {holes}");
+}
+
+#[test]
+fn push_face_lifts_the_top_of_a_box() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    let x = doc.object(id).unwrap().position.x;
+    assert!(doc.push_face(id, Vec3::new(x, 20.0, 0.0), Vec3::Y, 4.0));
+    let (min, max) = doc.object(id).unwrap().local_mesh().bounds();
+    let height = max.y - min.y;
+    assert!((height - 24.0).abs() < 0.5, "height {height}");
+}
+
+#[test]
+fn delete_face_drops_the_clicked_triangles() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    let x = doc.object(id).unwrap().position.x;
+    let before = doc.object(id).unwrap().local_mesh().triangle_count();
+    assert!(doc.delete_face(id, Vec3::new(x, 20.0, 0.0), Vec3::Y));
+    let after = doc.object(id).unwrap().local_mesh().triangle_count();
+    assert!(after < before, "before {before} after {after}");
+}
+
+#[test]
+fn simplify_keeps_fewer_triangles() {
+    let mut doc = Document::new();
+    let id = doc.add_cylinder();
+    doc.select(Some(id));
+    let before = doc.object(id).unwrap().local_mesh().triangle_count();
+    assert_eq!(doc.simplify_selection(0.4), 1);
+    let after = doc.object(id).unwrap().local_mesh().triangle_count();
+    assert!(after < before, "before {before} after {after}");
+}
+
+#[test]
+fn split_off_centre_makes_the_low_piece_smaller() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    doc.select(Some(id));
+    assert_eq!(doc.split_selection(AlignAxis::X, 0.25), 1);
+    let width = |name: &str| {
+        let object = doc
+            .objects()
+            .iter()
+            .find(|object| object.name.ends_with(name))
+            .unwrap();
+        let (min, max) = object.local_mesh().bounds();
+        max.x - min.x
+    };
+    assert!((width(" A") - 5.0).abs() < 0.2, "low {}", width(" A"));
+    assert!((width(" B") - 15.0).abs() < 0.2, "high {}", width(" B"));
+}
+
+#[test]
+fn circle_pattern_groups_more_than_five() {
+    let mut doc = Document::new();
+    let id = doc.add_box();
+    doc.set_position(id, Vec3::new(40.0, 0.0, 0.0));
+    doc.select(Some(id));
+    let created = doc.pattern_circle(6, 360.0, Vec3::ZERO, true);
+    assert_eq!(created.len(), 5);
+    assert!(doc
+        .objects()
+        .iter()
+        .any(|object| matches!(object.kind, ObjectKind::Group { .. })));
+    assert!(doc.object(id).unwrap().parent.is_some());
+}
+
+#[test]
+fn hollow_works_on_a_cylinder() {
+    let mut doc = Document::new();
+    let id = doc.add_cylinder();
+    doc.select(Some(id));
+    let full = mesh_volume(&doc.object(id).unwrap().local_mesh()).abs();
+    assert_eq!(doc.hollow_selection(2.0), 1);
+    let volume = mesh_volume(&doc.object(id).unwrap().local_mesh()).abs();
+    assert!(
+        volume > 0.0 && volume < full * 0.85,
+        "volume {volume} full {full}"
+    );
 }
