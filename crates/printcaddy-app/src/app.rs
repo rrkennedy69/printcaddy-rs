@@ -1240,22 +1240,20 @@ impl PrintCaddyApp {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
                 let hidden = object.hidden;
-                if ui
-                    .button(if hidden { "Show" } else { "Hide" })
-                    .on_hover_text("Hide or show this body")
-                    .clicked()
-                {
+                if header_icon(ui, "Hide", hidden, HeaderIcon::Eye { off: hidden }).clicked() {
                     if let Some(body) = self.doc.object_mut(id) {
                         body.hidden = !hidden;
                     }
                 }
                 let locked = object.locked;
-                if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+                if header_icon(ui, "Lock", locked, HeaderIcon::Lock { closed: locked }).clicked() {
                     if let Some(body) = self.doc.object_mut(id) {
                         body.locked = !locked;
                     }
                 }
+                header_icon(ui, "", false, HeaderIcon::Help);
             });
         });
         ui.add_space(4.0);
@@ -2964,6 +2962,82 @@ fn library_items() -> &'static [LibraryItem] {
         LibraryItem { label: "Crescent", icon: "crescent", shape: None, sketch: false },
         LibraryItem { label: "Ruler", icon: "ruler", shape: None, sketch: false },
     ]
+}
+
+enum HeaderIcon {
+    Help,
+    Lock { closed: bool },
+    Eye { off: bool },
+}
+
+/// Live inspector header icons: 26 px, ink `#8c735d`, orange when the state is on.
+fn header_icon(ui: &mut egui::Ui, tip: &str, active: bool, icon: HeaderIcon) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 6.0, Color32::from_rgb(233, 224, 211));
+    }
+    let ink = if active {
+        Color32::from_rgb(211, 113, 12)
+    } else if response.hovered() {
+        Color32::from_rgb(59, 40, 23)
+    } else if matches!(icon, HeaderIcon::Help) {
+        Color32::from_rgba_unmultiplied(140, 115, 93, 153)
+    } else {
+        Color32::from_rgb(140, 115, 93)
+    };
+    paint_header_icon(ui.painter(), rect.center(), ink, icon);
+    if tip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tip)
+    }
+}
+
+fn paint_header_icon(painter: &egui::Painter, center: Pos2, ink: Color32, icon: HeaderIcon) {
+    let stroke = egui::Stroke::new(1.4_f32, ink);
+    match icon {
+        HeaderIcon::Help => {
+            painter.circle_stroke(center, 6.5, stroke);
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "?",
+                egui::FontId::proportional(11.0),
+                ink,
+            );
+        }
+        HeaderIcon::Lock { closed } => {
+            let body = egui::Rect::from_center_size(center + egui::vec2(0.0, 2.6), egui::vec2(10.0, 7.2));
+            painter.rect_stroke(body, 1.4, stroke, egui::StrokeKind::Inside);
+            let mut shackle = Vec::new();
+            let steps = if closed { 8 } else { 6 };
+            for step in 0..=steps {
+                let t = std::f32::consts::PI + step as f32 / 8.0 * std::f32::consts::PI;
+                let lift = if closed { 0.0 } else { -2.4 };
+                let shift = if closed { 0.0 } else { -1.2 };
+                shackle.push(
+                    center + egui::vec2(t.cos() * 3.6 + shift, -t.sin() * 3.6 + lift - 1.2),
+                );
+            }
+            painter.add(egui::Shape::line(shackle, stroke));
+        }
+        HeaderIcon::Eye { off } => {
+            let mut lid = Vec::new();
+            for step in 0..=18 {
+                let t = step as f32 / 18.0 * std::f32::consts::TAU;
+                lid.push(center + egui::vec2(t.cos() * 7.0, t.sin() * 4.0));
+            }
+            painter.add(egui::Shape::closed_line(lid, stroke));
+            painter.circle_filled(center, 1.7, ink);
+            if off {
+                painter.line_segment(
+                    [center + egui::vec2(-6.2, 4.6), center + egui::vec2(6.2, -4.6)],
+                    stroke,
+                );
+            }
+        }
+    }
 }
 
 fn mode_chip(
