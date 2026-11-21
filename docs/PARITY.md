@@ -1,5 +1,13 @@
 # Parity
 
+Round H, second pass, adds the rest of the Modify tools that could be made solid.
+
+Pivot: click a face and later rotations turn about that point. A circular pattern uses the same point, or the origin. Hole pattern places staggered round cutters (6 mm, 9 mm apart, 4 mm from the edge). Offset moves the surface along its normal. Face moves the clicked face by the distance in the dialog. Delete face removes the clicked face. Simplify welds corners and drops triangles down to the share you keep. Pattern can run around a circle and groups the pieces when there are more than five. Mirror can keep the original. Split takes a position from 5 to 95, 50 being the centre. Hollow now uses the body's own mesh, not only a fresh box.
+
+Not built: Cookie cutter and Flexi joints. Hole pattern places cutter bodies rather than subtracting them, because a grid of booleans is too slow in this kernel. Chamfer is still the top edges of a box. Simplify does not use the live meshoptimizer pass.
+
+Shots: `docs/shots/parity/rust-h2-pivot.png`, `rust-h2-holes.png`, `rust-h2-offset.png`, `rust-h2-face.png`.
+
 Round H turns on five Modify tools.
 
 Mirror reflects the selection across the centre of its own box, on X, Y, or Z, and keeps the solid facing out. Pattern repeats the selection in a row. The count includes the original. Spacing is in scene millimetres: X to the right, Y up, Z. The default gap is the body's width plus 5 mm, the same starting point as the live row. Chamfer bevels the top edges of a box. Hollow gives a box walls and a floor and leaves the top open. Split cuts a body through its centre into two pieces. Each of these is one undo step.

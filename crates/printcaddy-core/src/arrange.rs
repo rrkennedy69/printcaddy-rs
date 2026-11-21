@@ -294,6 +294,35 @@ impl Document {
         }
     }
 
+    /// Point and outward normal of the triangle the ray hits first.
+    pub fn face_hit(&self, id: ObjectId, ray: Ray) -> Option<(Vec3, Vec3)> {
+        let mesh = self.object(id)?.world_mesh();
+        let mut best_t = f32::INFINITY;
+        let mut best: Option<(Vec3, Vec3)> = None;
+        let positions = &mesh.positions;
+        for tri in mesh.indices.chunks_exact(3) {
+            let a = Vec3::from_array(positions[tri[0] as usize]);
+            let b = Vec3::from_array(positions[tri[1] as usize]);
+            let c = Vec3::from_array(positions[tri[2] as usize]);
+            let Some(t) = ray_triangle(ray, a, b, c) else {
+                continue;
+            };
+            if t < best_t {
+                let mut normal = (b - a).cross(c - a);
+                if normal.length_squared() < 1e-12 {
+                    continue;
+                }
+                normal = normal.normalize();
+                if normal.dot(ray.direction) > 0.0 {
+                    normal = -normal;
+                }
+                best_t = t;
+                best = Some(((a + b + c) / 3.0, normal));
+            }
+        }
+        best
+    }
+
     /// Outward normal of the triangle the ray hits first.
     pub fn face_normal(&self, id: ObjectId, ray: Ray) -> Option<Vec3> {
         let mesh = self.object(id)?.world_mesh();

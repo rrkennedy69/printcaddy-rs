@@ -166,6 +166,24 @@ pub struct PrintCaddyApp {
     pattern_spacing: glam::Vec3,
     chamfer_mm: f32,
     hollow_mm: f32,
+    rotation_pivot: Option<glam::Vec3>,
+    pivot_pick: bool,
+    delete_face: bool,
+    push_face: bool,
+    show_holes: bool,
+    show_offset: bool,
+    show_simplify: bool,
+    show_face: bool,
+    mirror_copy: bool,
+    pattern_circle: bool,
+    pattern_angle: f32,
+    split_at: f32,
+    hole_size: f32,
+    hole_spacing: f32,
+    hole_margin: f32,
+    offset_mm: f32,
+    face_mm: f32,
+    simplify_ratio: f32,
 }
 
 impl PrintCaddyApp {
@@ -264,6 +282,24 @@ impl PrintCaddyApp {
             pattern_spacing: glam::Vec3::new(25.0, 0.0, 0.0),
             chamfer_mm: 2.0,
             hollow_mm: 2.0,
+            rotation_pivot: None,
+            pivot_pick: false,
+            delete_face: false,
+            push_face: false,
+            show_holes: false,
+            show_offset: false,
+            show_simplify: false,
+            show_face: false,
+            mirror_copy: false,
+            pattern_circle: false,
+            pattern_angle: 360.0,
+            split_at: 50.0,
+            hole_size: 6.0,
+            hole_spacing: 9.0,
+            hole_margin: 4.0,
+            offset_mm: 1.0,
+            face_mm: 5.0,
+            simplify_ratio: 0.5,
         }
     }
 
@@ -1057,7 +1093,7 @@ impl PrintCaddyApp {
             self.gesture = Gesture::Turn {
                 gizmo,
                 pivot_screen: overlay::project(&self.camera, aspect, rect, center).unwrap_or(pos),
-                pivot_world: center,
+                pivot_world: self.rotation_pivot.unwrap_or(center),
                 origin: pos,
                 starts,
                 engaged: false,
@@ -1232,6 +1268,8 @@ impl PrintCaddyApp {
             if let Some(pos) = pointer.interact_pos() {
                 if self.lay_flat {
                     self.finish_lay_flat(rect, pos);
+                } else if self.pivot_pick || self.delete_face || self.push_face {
+                    self.finish_face_pick(rect, pos);
                 } else {
                     let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
                     self.begin_primary(rect, pos, add);
@@ -1684,6 +1722,10 @@ impl eframe::App for PrintCaddyApp {
         self.chamfer_window(ctx);
         self.hollow_window(ctx);
         self.split_window(ctx);
+        self.hole_window(ctx);
+        self.offset_window(ctx);
+        self.simplify_window(ctx);
+        self.face_window(ctx);
         self.shortcuts_window(ctx);
         self.plate_tiles(ctx, view_rect);
         self.projects_window(ctx);
@@ -1788,6 +1830,46 @@ impl PrintCaddyApp {
         self.doc.lay_flat(id, normal);
         self.history.end();
         self.notice = "Laid the face on the plate.".into();
+    }
+
+    fn finish_face_pick(&mut self, rect: Rect, pos: Pos2) {
+        let picking_pivot = self.pivot_pick;
+        let deleting = self.delete_face;
+        let pushing = self.push_face;
+        self.pivot_pick = false;
+        self.delete_face = false;
+        self.push_face = false;
+        let Some(id) = self.doc.selection() else {
+            self.notice = "Select a body first.".into();
+            return;
+        };
+        let aspect = Self::aspect_of(rect);
+        let ray = scene::screen_ray(rect, pos, self.camera.view_proj(aspect));
+        let Some((point, normal)) = self.doc.face_hit(id, ray) else {
+            self.notice = "Click a face of the selected body.".into();
+            self.pivot_pick = picking_pivot;
+            self.delete_face = deleting;
+            self.push_face = pushing;
+            return;
+        };
+        if picking_pivot {
+            self.rotation_pivot = Some(point);
+            self.notice = "Pivot set. Rotations turn about that face.".into();
+            return;
+        }
+        if deleting {
+            self.step("Delete face");
+            self.doc.delete_face(id, point, normal);
+            self.history.end();
+            self.notice = "Deleted that face.".into();
+            return;
+        }
+        if pushing {
+            self.step("Face");
+            self.doc.push_face(id, point, normal, self.face_mm);
+            self.history.end();
+            self.notice = "Moved that face.".into();
+        }
     }
 
     fn history_window(&mut self, ctx: &egui::Context) {
@@ -1966,6 +2048,7 @@ impl PrintCaddyApp {
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
             .show(ctx, |ui| {
                 ui.label("Reflect the selection across its own centre.");
+                ui.checkbox(&mut self.mirror_copy, "Keep the original");
                 ui.horizontal(|ui| {
                     if ui.button("X").clicked() {
                         axis = Some(AlignAxis::X);
@@ -1981,7 +2064,7 @@ impl PrintCaddyApp {
         self.show_mirror = open;
         if let Some(axis) = axis {
             self.step("Mirror");
-            let moved = self.doc.mirror_selection(axis);
+            let moved = self.doc.mirror_selection(axis, self.mirror_copy);
             self.history.end();
             self.show_mirror = false;
             self.notice = format!("Mirrored {moved}.");
@@ -1999,6 +2082,7 @@ impl PrintCaddyApp {
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(40.0, 80.0))
             .show(ctx, |ui| {
                 ui.label("Repeat the selection. The count includes the original.");
+                ui.checkbox(&mut self.pattern_circle, "Around a circle");
                 let mut count = self.pattern_count as f32;
                 ui.horizontal(|ui| {
                     ui.label("Count");
@@ -2011,13 +2095,24 @@ impl PrintCaddyApp {
                     ui.add(egui::DragValue::new(&mut self.pattern_spacing.y).speed(0.5));
                     ui.add(egui::DragValue::new(&mut self.pattern_spacing.z).speed(0.5));
                 });
-                ui.small("X right, Y up, Z. A negative spacing runs the other way.");
+                ui.small("Row: X right, Y up, Z. Circle uses the pivot, or the origin, and spans the angle.");
+                if self.pattern_circle {
+                    ui.horizontal(|ui| {
+                        ui.label("Angle");
+                        ui.add(egui::DragValue::new(&mut self.pattern_angle).range(-360.0..=360.0).speed(1.0));
+                    });
+                }
                 apply = ui.button("Create").clicked();
             });
         self.show_pattern = open;
         if apply {
             self.step("Pattern");
-            let n = self.doc.pattern_row(self.pattern_count, self.pattern_spacing);
+            let n = if self.pattern_circle {
+                let center = self.rotation_pivot.unwrap_or(glam::Vec3::ZERO);
+                self.doc.pattern_circle(self.pattern_count, self.pattern_angle, center, true)
+            } else {
+                self.doc.pattern_row(self.pattern_count, self.pattern_spacing)
+            };
             self.history.end();
             self.show_pattern = false;
             self.notice = format!("Added {} copies.", n.len());
@@ -2096,7 +2191,11 @@ impl PrintCaddyApp {
             .open(&mut open)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(80.0, 80.0))
             .show(ctx, |ui| {
-                ui.label("Cut each selected body through its centre.");
+                ui.label("Cut each selected body. 50 is through the centre.");
+                ui.horizontal(|ui| {
+                    ui.label("Position");
+                    ui.add(egui::Slider::new(&mut self.split_at, 5.0..=95.0).show_value(true));
+                });
                 ui.horizontal(|ui| {
                     if ui.button("X").clicked() {
                         axis = Some(AlignAxis::X);
@@ -2112,10 +2211,123 @@ impl PrintCaddyApp {
         self.show_split = open;
         if let Some(axis) = axis {
             self.step("Split");
-            let n = self.doc.split_selection(axis);
+            let n = self.doc.split_selection(axis, self.split_at / 100.0);
             self.history.end();
             self.show_split = false;
             self.notice = format!("Split {n}.");
+        }
+    }
+
+    fn hole_window(&mut self, ctx: &egui::Context) {
+        if !self.show_holes {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Hole pattern")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
+            .show(ctx, |ui| {
+                ui.label("Staggered round holes through the body. 6 mm, 9 mm apart, 4 mm from the edge.");
+                ui.horizontal(|ui| {
+                    ui.label("Size");
+                    ui.add(egui::DragValue::new(&mut self.hole_size).range(0.5..=40.0).speed(0.1));
+                    ui.label("Spacing");
+                    ui.add(egui::DragValue::new(&mut self.hole_spacing).range(1.0..=80.0).speed(0.1));
+                    ui.label("Margin");
+                    ui.add(egui::DragValue::new(&mut self.hole_margin).range(0.0..=20.0).speed(0.1));
+                });
+                apply = ui.button("Create").clicked();
+            });
+        self.show_holes = open;
+        if apply {
+            self.step("Hole pattern");
+            let n = self.doc.hole_pattern(self.hole_size, self.hole_spacing, self.hole_margin);
+            self.history.end();
+            self.show_holes = false;
+            self.notice = format!("Hole pattern on {n}.");
+        }
+    }
+
+    fn offset_window(&mut self, ctx: &egui::Context) {
+        if !self.show_offset {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Offset")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(20.0, 90.0))
+            .show(ctx, |ui| {
+                ui.label("Move the surface out. A negative distance shrinks it.");
+                ui.horizontal(|ui| {
+                    ui.label("Distance mm");
+                    ui.add(egui::DragValue::new(&mut self.offset_mm).range(-20.0..=20.0).speed(0.1));
+                });
+                apply = ui.button("Offset").clicked();
+            });
+        self.show_offset = open;
+        if apply {
+            self.step("Offset");
+            let n = self.doc.offset_selection(self.offset_mm);
+            self.history.end();
+            self.show_offset = false;
+            self.notice = format!("Offset {n}.");
+        }
+    }
+
+    fn simplify_window(&mut self, ctx: &egui::Context) {
+        if !self.show_simplify {
+            return;
+        }
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Simplify")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(-20.0, 90.0))
+            .show(ctx, |ui| {
+                ui.label("Keep about this share of the triangles.");
+                ui.add(egui::Slider::new(&mut self.simplify_ratio, 0.1..=0.9).show_value(true));
+                apply = ui.button("Simplify").clicked();
+            });
+        self.show_simplify = open;
+        if apply {
+            self.step("Simplify");
+            let n = self.doc.simplify_selection(self.simplify_ratio);
+            self.history.end();
+            self.show_simplify = false;
+            self.notice = if n == 0 {
+                "That body is already as simple as this pass can make it.".into()
+            } else {
+                format!("Simplified {n}.")
+            };
+        }
+    }
+
+    fn face_window(&mut self, ctx: &egui::Context) {
+        if !self.show_face {
+            return;
+        }
+        let mut open = true;
+        let mut arm = false;
+        egui::Window::new("Face")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 100.0))
+            .show(ctx, |ui| {
+                ui.label("Move a face along its normal, then click the face.");
+                ui.horizontal(|ui| {
+                    ui.label("Distance mm");
+                    ui.add(egui::DragValue::new(&mut self.face_mm).range(-50.0..=50.0).speed(0.2));
+                });
+                arm = ui.button("Pick face").clicked();
+            });
+        self.show_face = open;
+        if arm {
+            self.push_face = true;
+            self.delete_face = false;
+            self.pivot_pick = false;
+            self.show_face = false;
+            self.notice = "Click the face to move.".into();
         }
     }
 
@@ -2138,7 +2350,13 @@ impl PrintCaddyApp {
             | chrome::Cmd::Pattern
             | chrome::Cmd::Chamfer
             | chrome::Cmd::Hollow
-            | chrome::Cmd::Split => selected >= 1,
+            | chrome::Cmd::Split
+            | chrome::Cmd::Pivot
+            | chrome::Cmd::HolePattern
+            | chrome::Cmd::Offset
+            | chrome::Cmd::Face
+            | chrome::Cmd::DeleteFace
+            | chrome::Cmd::Simplify => selected >= 1,
             chrome::Cmd::Paste => !self.clipboard.is_empty(),
             chrome::Cmd::Group | chrome::Cmd::Intersect | chrome::Cmd::CutOut => selected >= 2,
             chrome::Cmd::Ungroup => selected >= 1,
@@ -2280,6 +2498,23 @@ impl PrintCaddyApp {
             chrome::Cmd::Chamfer => self.show_chamfer = true,
             chrome::Cmd::Hollow => self.show_hollow = true,
             chrome::Cmd::Split => self.show_split = true,
+            chrome::Cmd::Pivot => {
+                self.pivot_pick = true;
+                self.delete_face = false;
+                self.push_face = false;
+                self.lay_flat = false;
+                self.notice = "Pivot: click a face. Later rotations turn about its centre.".into();
+            }
+            chrome::Cmd::HolePattern => self.show_holes = true,
+            chrome::Cmd::Offset => self.show_offset = true,
+            chrome::Cmd::Face => self.show_face = true,
+            chrome::Cmd::DeleteFace => {
+                self.delete_face = true;
+                self.pivot_pick = false;
+                self.push_face = false;
+                self.notice = "Delete face: click the face to remove.".into();
+            }
+            chrome::Cmd::Simplify => self.show_simplify = true,
             chrome::Cmd::Guide | chrome::Cmd::Bug | chrome::Cmd::NotBuilt => {
                 self.notice = "That tool is not in this build yet.".into();
             }
