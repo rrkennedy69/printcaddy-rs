@@ -123,11 +123,14 @@ impl GridLines {
                 border,
             );
             if ox.abs() < 0.1 && oz.abs() < 0.1 {
-                let len = 36.0;
-                let y = 0.2;
-                line([0.0, y, 0.0], [len, y, 0.0], [0.86, 0.28, 0.28]);
-                line([0.0, y, 0.0], [0.0, y + len, 0.0], [0.30, 0.72, 0.38]);
-                line([0.0, y, 0.0], [0.0, y, len], [0.28, 0.52, 0.90]);
+                // Live triad: front-left corner, X right, Y toward the back, Z up. Length 24 mm on a 200 mm bed.
+                let len = 24.0;
+                let y = 0.08;
+                let x0 = ox - half;
+                let z0 = oz + half;
+                line([x0, y, z0], [x0 + len, y, z0], [0.898, 0.282, 0.302]);
+                line([x0, y, z0], [x0, y, z0 - len], [0.247, 0.682, 0.353]);
+                line([x0, y, z0], [x0, y + len, z0], [0.231, 0.510, 0.965]);
             }
         }
         Self { vertices }

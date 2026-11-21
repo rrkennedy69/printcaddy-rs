@@ -8,7 +8,7 @@ use printcaddy_core::{
 #[test]
 fn new_bodies_use_the_slate_default_and_sit_on_the_plate() {
     assert_eq!(DEFAULT_MODEL_COLOR.hex_string(), "#8A98A6");
-    assert_eq!(PLATE_SIZE_MM, 256.0);
+    assert_eq!(PLATE_SIZE_MM, 200.0);
     assert_eq!(GRID_MINOR_MM, 10.0);
     assert_eq!(GRID_MAJOR_MM, 50.0);
 

@@ -600,16 +600,22 @@ fn paint_flat_label(
     };
     let right_px = right - center;
     let up_px = up - center;
-    let gap_px = (next - center).length() * gap_mm;
+    let run_px = next - center;
+    let gap_px = run_px.length() * gap_mm;
     if right_px.length() < 0.05 || up_px.length() < 0.05 || gap_px < 4.0 {
         return;
     }
-    // Live glyphs are 48px of a 64px texture on a plane `text_size` tall.
-    // The run to the next mark is what they have to fit in, so a foreshortened
-    // edge cannot swell a number over its neighbours.
-    let from_texture = text_size * (48.0 / 64.0) * up_px.length().min(right_px.length());
+    // Both edges use the live texture height. A label only shrinks when its own
+    // run (the width on the front edge, the height on the left edge) would overlap.
+    let from_texture = text_size * (48.0 / 64.0) * up_px.length();
     let chars = text.chars().count().max(1) as f32;
-    let font_px = from_texture.min(gap_px * 0.62 / (chars * 0.55)).min(16.0);
+    let along_reading = run_px.normalized().dot(right_px.normalized()).abs() > 0.65;
+    let cap = if along_reading {
+        gap_px * 0.72 / (chars * 0.55)
+    } else {
+        gap_px * 0.78
+    };
+    let font_px = from_texture.min(cap).min(18.0);
     if font_px < 6.0 {
         return;
     }

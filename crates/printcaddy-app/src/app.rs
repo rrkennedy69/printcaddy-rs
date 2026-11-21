@@ -112,6 +112,8 @@ pub struct PrintCaddyApp {
     show_grid: bool,
     snap_step: f32,
     keep_proportions: bool,
+    /// Texture, properties, position, rotation. Open matches the live panel.
+    section_open: [bool; 4],
     saved_sizes: Vec<(Shape, f32, f32, f32)>,
     notice: String,
     theme: ThemeId,
@@ -193,6 +195,7 @@ impl PrintCaddyApp {
             show_grid: true,
             snap_step: DEFAULT_SNAP_MM,
             keep_proportions: false,
+            section_open: [true, true, true, true],
             saved_sizes: Vec::new(),
             notice:
                 "Drag empty space to orbit. Right-drag or two fingers pan. Wheel or pinch zooms."
@@ -1219,12 +1222,7 @@ impl PrintCaddyApp {
         let Some(object) = self.doc.object(id).cloned() else {
             return;
         };
-        let orange = Color32::from_rgb(196, 112, 42);
-        let card = egui::Frame::NONE
-            .fill(Color32::WHITE)
-            .corner_radius(10.0)
-            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(232, 222, 208)))
-            .inner_margin(egui::Margin::same(8));
+        let orange = Color32::from_rgb(247, 161, 70);
 
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("⌃").color(chrome::MUTED));
@@ -1256,17 +1254,19 @@ impl PrintCaddyApp {
                 header_icon(ui, "", false, HeaderIcon::Help);
             });
         });
-        ui.add_space(4.0);
-        card.show(ui, |ui| {
+        ui.add_space(8.0);
+        state_card(ui, |ui| {
             ui.horizontal(|ui| {
-                if mode_chip(ui, object.color, "Solid", "(S)", !object.hole, orange).clicked() {
+                let width = ((ui.available_width() - 28.0) / 2.0).max(72.0);
+                if mode_tile(ui, object.color, "Solid", "(S)", !object.hole, false, width).clicked() {
                     self.doc.set_hole(id, false);
                 }
-                ui.add_space(12.0);
-                if mode_chip(ui, object.color, "Hole", "(H)", object.hole, orange).clicked() {
+                ui.add_space(28.0);
+                if mode_tile(ui, object.color, "Hole", "(H)", object.hole, true, width).clicked() {
                     self.doc.set_hole(id, true);
                 }
             });
+            ui.add_space(4.0);
             let mut transparent = object.transparent;
             if ui.checkbox(&mut transparent, "Transparent (T)").changed() {
                 if let Some(body) = self.doc.object_mut(id) {
@@ -1275,15 +1275,13 @@ impl PrintCaddyApp {
                 }
             }
         });
-        ui.add_space(6.0);
-        card.show(ui, |ui| {
+        let mut open = self.section_open;
+        section_card(ui, "Surface texture", &mut open[0], |ui| {
             ui.add_enabled_ui(false, |ui| {
-                ui.label("Surface texture");
                 ui.label(egui::RichText::new("Texture mask    Not a mask").color(chrome::MUTED));
             });
             ui.small("Surface texture is not in this build yet.");
         });
-        ui.add_space(6.0);
         let (width0, depth0, height0) = object.size();
         let unit = if self.inches { 25.4 } else { 1.0 };
         let unit_name = if self.inches { "in" } else { "mm" };
@@ -1299,10 +1297,7 @@ impl PrintCaddyApp {
             object.kind,
             printcaddy_core::ObjectKind::Cylinder { .. }
         );
-        card.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Properties").strong().color(chrome::INK));
-            });
+        section_card(ui, "Properties", &mut open[1], |ui| {
             ui.checkbox(&mut self.keep_proportions, "Keep proportions");
             if cylinder {
                 sized |= dim_row(ui, "Diameter", &mut width, unit_name, round, orange);
@@ -1339,20 +1334,17 @@ impl PrintCaddyApp {
                 }
             });
         });
-        ui.add_space(6.0);
-        card.show(ui, |ui| {
-            ui.label(egui::RichText::new("Position").strong().color(chrome::INK));
-            pose |= number(ui, "X", &mut position.x);
-            pose |= number(ui, "Y", &mut position.y);
-            pose |= number(ui, "Z", &mut position.z);
+        section_card(ui, "Position", &mut open[2], |ui| {
+            pose |= value_row(ui, "X", &mut position.x, unit_name, 2);
+            pose |= value_row(ui, "Y", &mut position.y, unit_name, 2);
+            pose |= value_row(ui, "Z", &mut position.z, unit_name, 2);
         });
-        ui.add_space(6.0);
-        card.show(ui, |ui| {
-            ui.label(egui::RichText::new("Rotation").strong().color(chrome::INK));
-            pose |= number(ui, "X", &mut rotation.x);
-            pose |= number(ui, "Y", &mut rotation.y);
-            pose |= number(ui, "Z", &mut rotation.z);
+        section_card(ui, "Rotation", &mut open[3], |ui| {
+            pose |= value_row(ui, "X", &mut rotation.x, "°", 1);
+            pose |= value_row(ui, "Y", &mut rotation.y, "°", 1);
+            pose |= value_row(ui, "Z", &mut rotation.z, "°", 1);
         });
+        self.section_open = open;
         if (pose || sized) && !self.history.is_open() {
             self.history.begin(&self.doc);
         }
@@ -1384,8 +1376,7 @@ impl PrintCaddyApp {
             self.doc.set_size(id, width * unit, depth * unit, height * unit);
         }
         if self.show_colour {
-            ui.add_space(6.0);
-            card.show(ui, |ui| {
+            state_card(ui, |ui| {
                 ui.label(egui::RichText::new("Colour").strong().color(chrome::INK));
                 self.colour_picker(ui);
             });
@@ -1598,10 +1589,11 @@ impl eframe::App for PrintCaddyApp {
                         snap_cmd = chrome::snap_bar(ui, self.snap, self.snap_step, self.inches);
                     });
                 if self.doc.selection().is_some() || self.sketching || self.show_colour {
-                    let height = (view_rect.height() - 28.0).max(200.0);
+                    let top = view_rect.top() + 8.0;
+                    let height = (view_rect.bottom() - top - 10.0).max(160.0);
                     egui::Area::new(egui::Id::new("inspector"))
                         .order(egui::Order::Foreground)
-                        .fixed_pos(view_rect.right_top() + egui::vec2(-316.0, 8.0))
+                        .fixed_pos(egui::pos2(view_rect.right() - 316.0, top))
                         .show(ctx, |ui| {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgb(250, 247, 242))
@@ -1610,9 +1602,14 @@ impl eframe::App for PrintCaddyApp {
                                 .inner_margin(egui::Margin::same(8))
                                 .show(ui, |ui| {
                                     ui.set_width(292.0);
-                                    egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-                                        self.inspector_body(ui);
-                                    });
+                                    ui.set_max_height(height - 16.0);
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("inspector-body")
+                                        .max_height(height - 16.0)
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            self.inspector_body(ui);
+                                        });
                                 });
                         });
                 }
@@ -2057,21 +2054,23 @@ impl PrintCaddyApp {
                                     let image = egui::Image::new(tex)
                                         .fit_to_exact_size(egui::vec2(56.0, 56.0))
                                         .tint(tint);
-                                    let response = ui.add(image.sense(Sense::click()));
+                                    let response = ui.add(image.sense(if built {
+                                        Sense::click()
+                                    } else {
+                                        Sense::hover()
+                                    }));
                                     if response.clicked() && built {
                                         if item.sketch {
                                             start_sketch = true;
                                         } else {
                                             chosen = item.shape;
                                         }
-                                    } else if response.clicked() {
-                                        self.notice = format!("{} is not in this build yet.", item.label);
                                     }
                                 }
                                 let color = if built { chrome::INK } else { chrome::MUTED };
                                 let label = ui.add(
                                     egui::Label::new(egui::RichText::new(item.label).size(13.0).color(color))
-                                        .sense(Sense::click()),
+                                        .sense(if built { Sense::click() } else { Sense::hover() }),
                                 );
                                 if label.clicked() && built {
                                     if item.sketch {
@@ -2079,8 +2078,6 @@ impl PrintCaddyApp {
                                     } else {
                                         chosen = item.shape;
                                     }
-                                } else if label.clicked() {
-                                    self.notice = format!("{} is not in this build yet.", item.label);
                                 }
                             });
                             if (index + 1) % cols == 0 {
@@ -2972,7 +2969,7 @@ enum HeaderIcon {
 
 /// Live inspector header icons: 26 px, ink `#8c735d`, orange when the state is on.
 fn header_icon(ui: &mut egui::Ui, tip: &str, active: bool, icon: HeaderIcon) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, 6.0, Color32::from_rgb(233, 224, 211));
@@ -2998,17 +2995,17 @@ fn paint_header_icon(painter: &egui::Painter, center: Pos2, ink: Color32, icon: 
     let stroke = egui::Stroke::new(1.4_f32, ink);
     match icon {
         HeaderIcon::Help => {
-            painter.circle_stroke(center, 6.5, stroke);
+            painter.circle_stroke(center, 8.0, stroke);
             painter.text(
                 center,
                 egui::Align2::CENTER_CENTER,
                 "?",
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(13.0),
                 ink,
             );
         }
         HeaderIcon::Lock { closed } => {
-            let body = egui::Rect::from_center_size(center + egui::vec2(0.0, 2.6), egui::vec2(10.0, 7.2));
+            let body = egui::Rect::from_center_size(center + egui::vec2(0.0, 3.2), egui::vec2(12.0, 8.4));
             painter.rect_stroke(body, 1.4, stroke, egui::StrokeKind::Inside);
             let mut shackle = Vec::new();
             let steps = if closed { 8 } else { 6 };
@@ -3017,7 +3014,7 @@ fn paint_header_icon(painter: &egui::Painter, center: Pos2, ink: Color32, icon: 
                 let lift = if closed { 0.0 } else { -2.4 };
                 let shift = if closed { 0.0 } else { -1.2 };
                 shackle.push(
-                    center + egui::vec2(t.cos() * 3.6 + shift, -t.sin() * 3.6 + lift - 1.2),
+                    center + egui::vec2(t.cos() * 4.4 + shift, -t.sin() * 4.4 + lift - 1.4),
                 );
             }
             painter.add(egui::Shape::line(shackle, stroke));
@@ -3026,13 +3023,13 @@ fn paint_header_icon(painter: &egui::Painter, center: Pos2, ink: Color32, icon: 
             let mut lid = Vec::new();
             for step in 0..=18 {
                 let t = step as f32 / 18.0 * std::f32::consts::TAU;
-                lid.push(center + egui::vec2(t.cos() * 7.0, t.sin() * 4.0));
+                lid.push(center + egui::vec2(t.cos() * 8.4, t.sin() * 5.0));
             }
             painter.add(egui::Shape::closed_line(lid, stroke));
-            painter.circle_filled(center, 1.7, ink);
+            painter.circle_filled(center, 2.1, ink);
             if off {
                 painter.line_segment(
-                    [center + egui::vec2(-6.2, 4.6), center + egui::vec2(6.2, -4.6)],
+                    [center + egui::vec2(-7.4, 5.4), center + egui::vec2(7.4, -5.4)],
                     stroke,
                 );
             }
@@ -3040,44 +3037,177 @@ fn paint_header_icon(painter: &egui::Painter, center: Pos2, ink: Color32, icon: 
     }
 }
 
-fn mode_chip(
+fn state_card(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(255, 255, 255))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::from(egui::vec2(18.0, 16.0)))
+        .show(ui, body);
+    ui.add_space(10.0);
+}
+
+fn section_card(ui: &mut egui::Ui, title: &str, open: &mut bool, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(255, 255, 255))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(14, 0))
+        .show(ui, |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 47.0), Sense::click());
+            if response.clicked() {
+                *open = !*open;
+            }
+            let ink = if response.hovered() {
+                Color32::from_rgb(195, 115, 31)
+            } else {
+                Color32::from_rgb(93, 71, 49)
+            };
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(18.0),
+                ink,
+            );
+            let tip = rect.right_center() - egui::vec2(6.0, 0.0);
+            let dy = if *open { -1.0 } else { 1.0 };
+            ui.painter().line_segment(
+                [tip + egui::vec2(-5.0, -2.0 * dy), tip + egui::vec2(0.0, 3.0 * dy)],
+                egui::Stroke::new(1.6_f32, ink),
+            );
+            ui.painter().line_segment(
+                [tip + egui::vec2(0.0, 3.0 * dy), tip + egui::vec2(5.0, -2.0 * dy)],
+                egui::Stroke::new(1.6_f32, ink),
+            );
+            if *open {
+                body(ui);
+                ui.add_space(14.0);
+            }
+        });
+    ui.add_space(10.0);
+}
+
+fn mode_tile(
     ui: &mut egui::Ui,
     color: printcaddy_core::Color,
     title: &str,
     key: &str,
     on: bool,
-    orange: Color32,
+    hole: bool,
+    width: f32,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(110.0, 78.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 96.0), Sense::click());
+    let swatch = egui::Rect::from_center_size(rect.center() - egui::vec2(0.0, 12.0), egui::vec2(64.0, 64.0));
     if on {
         ui.painter().rect_stroke(
-            rect,
+            swatch,
             10.0,
-            egui::Stroke::new(1.5_f32, orange),
+            egui::Stroke::new(4.0_f32, Color32::from_rgb(247, 160, 70)),
             egui::StrokeKind::Inside,
         );
     }
-    let swatch = egui::Rect::from_center_size(rect.center() - egui::vec2(0.0, 12.0), egui::vec2(36.0, 36.0));
-    let fill = if title == "Hole" {
-        Color32::from_rgb(230, 230, 230)
+    let inner = swatch.shrink(4.0);
+    ui.painter().rect_filled(inner, 8.0, Color32::WHITE);
+    let face = inner.shrink(4.0);
+    if hole {
+        let painter = ui.painter().with_clip_rect(face);
+        painter.rect_filled(face, 6.0, Color32::from_rgb(222, 222, 222));
+        let dark = egui::Stroke::new(7.0_f32, Color32::from_rgb(184, 184, 184));
+        let mut offset = -face.height();
+        while offset < face.width() + face.height() {
+            painter.line_segment(
+                [
+                    egui::pos2(face.left() + offset, face.top()),
+                    egui::pos2(face.left() + offset + face.height(), face.bottom()),
+                ],
+                dark,
+            );
+            offset += 14.0;
+        }
     } else {
-        Color32::from_rgb(color.r, color.g, color.b)
-    };
-    ui.painter().rect_filled(swatch, 6.0, fill);
-    ui.painter().rect_stroke(
-        swatch,
-        6.0,
-        egui::Stroke::new(1.0_f32, Color32::from_rgb(180, 170, 156)),
-        egui::StrokeKind::Inside,
-    );
+        ui.painter()
+            .rect_filled(face, 6.0, Color32::from_rgb(color.r, color.g, color.b));
+    }
     ui.painter().text(
-        rect.center() + egui::vec2(0.0, 24.0),
+        egui::pos2(rect.center().x, swatch.bottom() + 14.0),
         egui::Align2::CENTER_CENTER,
         format!("{title} {key}"),
-        egui::FontId::proportional(12.0),
-        if on { orange } else { chrome::INK },
+        egui::FontId::proportional(14.0),
+        if on {
+            Color32::from_rgb(247, 161, 70)
+        } else {
+            Color32::from_rgb(116, 97, 78)
+        },
     );
     response
+}
+
+fn value_box(ui: &mut egui::Ui, value: &mut f32, unit: &str, decimals: usize, range: std::ops::RangeInclusive<f32>) -> bool {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(108.0, 31.0), Sense::hover());
+    ui.painter().rect_filled(rect, 6.0, Color32::WHITE);
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.0_f32, Color32::from_rgb(216, 201, 186)),
+        egui::StrokeKind::Inside,
+    );
+    let mut changed = false;
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink(4.0)), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(
+                egui::RichText::new(unit)
+                    .size(11.0)
+                    .color(Color32::from_rgb(129, 111, 93)),
+            );
+            ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.hovered.bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.active.bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            ui.visuals_mut().widgets.hovered.bg_stroke = egui::Stroke::NONE;
+            ui.visuals_mut().widgets.active.bg_stroke = egui::Stroke::NONE;
+            changed = ui
+                .add(
+                    egui::DragValue::new(value)
+                        .speed(0.1)
+                        .fixed_decimals(decimals)
+                        .range(range),
+                )
+                .changed();
+        });
+    });
+    changed
+}
+
+fn track_slider(ui: &mut egui::Ui, value: &mut f32, min: f32, max: f32) -> bool {
+    let before = *value;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), Sense::click_and_drag());
+    let span = (max - min).max(0.001);
+    if let Some(pointer) = response.interact_pointer_pos() {
+        if response.dragged() || response.clicked() {
+            let t = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+            *value = min + t * span;
+        }
+    }
+    let t = ((*value - min) / span).clamp(0.0, 1.0);
+    let track = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), 5.0));
+    ui.painter()
+        .rect_filled(track, 99.0, Color32::from_rgb(232, 227, 218));
+    let fill = egui::Rect::from_min_max(
+        track.left_top(),
+        egui::pos2(track.left() + track.width() * t, track.bottom()),
+    );
+    ui.painter()
+        .rect_filled(fill, 99.0, Color32::from_rgb(210, 112, 9));
+    let thumb = egui::pos2(track.left() + track.width() * t, track.center().y);
+    ui.painter().circle_filled(thumb, 8.5, Color32::WHITE);
+    ui.painter().circle_stroke(
+        thumb,
+        7.2,
+        egui::Stroke::new(2.0_f32, Color32::from_rgb(210, 112, 9)),
+    );
+    (*value - before).abs() > 1e-4
 }
 
 fn dim_row(
@@ -3086,26 +3216,33 @@ fn dim_row(
     value: &mut f32,
     unit: &str,
     decimals: usize,
-    orange: Color32,
+    _orange: Color32,
 ) -> bool {
     let before = *value;
+    let mut changed = false;
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).color(chrome::INK));
+        ui.label(egui::RichText::new(label).size(14.0).color(Color32::from_rgb(93, 71, 49)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new(unit).color(chrome::MUTED));
-            ui.add(
-                egui::DragValue::new(value)
-                    .speed(0.1)
-                    .fixed_decimals(decimals)
-                    .range(0.01..=400.0),
-            );
+            let max = if unit == "in" { 8.0 } else { 400.0 };
+            changed = value_box(ui, value, unit, decimals, 0.01..=max);
         });
     });
-    let max = (*value * 4.0).max(80.0);
-    ui.add(egui::Slider::new(value, 0.2..=max).show_value(false).trailing_fill(true));
-    ui.visuals_mut().widgets.inactive.bg_fill = orange;
-    let _ = orange;
+    let max = if unit == "in" { 8.0 } else { 200.0 };
+    track_slider(ui, value, 0.0, max);
     (*value - before).abs() > 1e-4
+}
+
+fn value_row(ui: &mut egui::Ui, label: &str, value: &mut f32, unit: &str, decimals: usize) -> bool {
+    ui.add_space(6.0);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).size(14.0).color(Color32::from_rgb(93, 71, 49)));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed = value_box(ui, value, unit, decimals, -4000.0..=4000.0);
+        });
+    });
+    changed
 }
 
 fn shape_icon_key(shape: Shape) -> &'static str {

@@ -54,8 +54,8 @@ pub fn snap_mm(value: f32, step: f32) -> f32 {
     }
 }
 
-/// Build plate edge length, in millimetres. The plate is centered on the origin.
-pub const PLATE_SIZE_MM: f32 = 256.0;
+/// Build plate edge length, in millimetres. The live editor's default bed is 200 mm.
+pub const PLATE_SIZE_MM: f32 = 200.0;
 /// Fine grid spacing on the build plate.
 pub const GRID_MINOR_MM: f32 = 10.0;
 /// Bold grid spacing on the build plate.

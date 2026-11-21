@@ -1,5 +1,13 @@
 # Parity
 
+Round F finishes the object inspector and lines the plate up with the live editor.
+
+The Solid and Hole tiles are the live 64 px swatches. Hole is the diagonal hatch. The active tile has the orange rim. Sliders are an orange fill on a light track with a white thumb. Number boxes show the unit inside (`mm`, `in`, or `°`). Section cards collapse. The panel scrolls inside the window at desktop and iPad sizes. Header icons are the larger help, lock, and eye marks. The bed is the live 200 mm default, so Home is the live camera `(118, 96, 118)` at 38°. The axis triad sits on the front-left corner (X right, Y toward the back, Z up). Green ruler labels use the same type size as the red ones. Modify, Arrange, and shape-library items that are not built are grey and do not run.
+
+Still different: most Modify and Arrange tools are not implemented, the shape library still cannot build the live extras, surface texture is only the disabled row, and the numbers are screen text rather than textures on the bed.
+
+Shots: `docs/shots/parity/rust-f-inspector.png`, `rust-f-inspector-bottom.png`, `rust-f-editor.png`, `rust-f-ipad.png` (1180×820).
+
 Round E matches the live edge rulers and the home camera.
 
 The rulers are the live printed scale. In millimetres the ticks are every 1 mm, taller at 5 mm, and tallest at 10 mm. The front edge is numbered in red (`#e5484d`) and the left edge in green (`#3fae5a`). The tick lines are the live dark grey. Inches use eighth-inch ticks and whole-inch numbers. A fresh load and Home use the live view: from `(118, 96, 118)` toward the origin, 38° vertical field. The live default bed is 200 mm and this bed is 256 mm, so that offset is multiplied by 256/200 and the plate fills the window the same way.

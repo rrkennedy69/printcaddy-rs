@@ -240,8 +240,6 @@ fn ribbon(ui: &mut Ui, icons: &IconSet, row: &[Group], can: &dyn Fn(Cmd) -> bool
                         let clicked = icon_tool(ui, icons.toolbar.get(tool.icon), tool.label, enabled);
                         if clicked && enabled {
                             cmd = Some(tool.cmd);
-                        } else if clicked && !tool.built {
-                            cmd = Some(Cmd::NotBuilt);
                         }
                     }
                 });
