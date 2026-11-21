@@ -583,6 +583,8 @@ fn paint_flat_label(
     text: &str,
     ink: Color32,
     text_size: f32,
+    run: Vec3,
+    gap_mm: f32,
 ) {
     let Some(center) = project(camera, aspect, rect, at) else {
         return;
@@ -593,15 +595,22 @@ fn paint_flat_label(
     let Some(up) = project(camera, aspect, rect, at + Vec3::new(0.0, 0.0, -1.0)) else {
         return;
     };
+    let Some(next) = project(camera, aspect, rect, at + run) else {
+        return;
+    };
     let right_px = right - center;
     let up_px = up - center;
-    let px_per_mm = up_px.length();
-    if px_per_mm < 0.05 || right_px.length() < 0.05 {
+    let gap_px = (next - center).length() * gap_mm;
+    if right_px.length() < 0.05 || up_px.length() < 0.05 || gap_px < 4.0 {
         return;
     }
-    // The live texture is 48px of a 64px canvas mapped onto a plane `text_size` tall.
-    let font_px = text_size * (48.0 / 64.0) * px_per_mm;
-    if !(3.0..=160.0).contains(&font_px) {
+    // Live glyphs are 48px of a 64px texture on a plane `text_size` tall.
+    // The run to the next mark is what they have to fit in, so a foreshortened
+    // edge cannot swell a number over its neighbours.
+    let from_texture = text_size * (48.0 / 64.0) * up_px.length().min(right_px.length());
+    let chars = text.chars().count().max(1) as f32;
+    let font_px = from_texture.min(gap_px * 0.62 / (chars * 0.55)).min(16.0);
+    if font_px < 6.0 {
         return;
     }
     let galley = painter.layout_no_wrap(text.to_string(), egui::FontId::proportional(font_px), ink);
@@ -666,6 +675,7 @@ pub fn paint_rulers(
         (1.0, 10, 5)
     };
     let count = (PLATE_SIZE_MM / step + 1.0e-4).floor() as i32;
+    let gap_mm = every as f32 * step;
     for &(ox, oz) in centers {
         for i in 0..=count {
             let d = i as f32 * step;
@@ -697,6 +707,8 @@ pub fn paint_rulers(
                     &format!("{}", n.round() as i32),
                     x_ink,
                     text_size,
+                    Vec3::X,
+                    gap_mm,
                 );
             }
             let z_outer = Vec3::new(ox - half, y, oz + half - d);
@@ -720,6 +732,8 @@ pub fn paint_rulers(
                     &format!("{}", n.round() as i32),
                     y_ink,
                     text_size,
+                    Vec3::new(0.0, 0.0, -1.0),
+                    gap_mm,
                 );
             }
         }
