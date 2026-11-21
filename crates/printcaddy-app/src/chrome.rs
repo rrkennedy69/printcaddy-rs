@@ -38,6 +38,19 @@ pub enum Cmd {
     ToggleGrid,
     Guide,
     Bug,
+    Copy,
+    Paste,
+    History,
+    ObjectList,
+    HideMenu,
+    HideSelected,
+    ShowSelected,
+    ShowAll,
+    Align,
+    Center,
+    Drop,
+    LayFlat,
+    Gravity,
     NotBuilt,
     SetInches(bool),
     SetSnap(bool),
@@ -59,18 +72,18 @@ const HOME: &[Tool] = &[
     Tool { icon: "home-dashboard", label: "Home", cmd: Cmd::NotBuilt, built: false },
     Tool { icon: "undo", label: "Undo", cmd: Cmd::Undo, built: true },
     Tool { icon: "redo", label: "Redo", cmd: Cmd::Redo, built: true },
-    Tool { icon: "history", label: "History", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "history", label: "History", cmd: Cmd::History, built: true },
 ];
 const CLIPBOARD: &[Tool] = &[
-    Tool { icon: "copy", label: "Copy", cmd: Cmd::NotBuilt, built: false },
-    Tool { icon: "paste", label: "Paste", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "copy", label: "Copy", cmd: Cmd::Copy, built: true },
+    Tool { icon: "paste", label: "Paste", cmd: Cmd::Paste, built: true },
     Tool { icon: "duplicate", label: "Duplicate", cmd: Cmd::Duplicate, built: true },
     Tool { icon: "delete", label: "Delete", cmd: Cmd::Delete, built: true },
 ];
 const SHAPES: &[Tool] = &[
     Tool { icon: "add-shape", label: "Add shape", cmd: Cmd::Shapes, built: true },
-    Tool { icon: "show-object-list", label: "Object list", cmd: Cmd::NotBuilt, built: false },
-    Tool { icon: "hide-selected", label: "Hide selected", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "show-object-list", label: "Object list", cmd: Cmd::ObjectList, built: true },
+    Tool { icon: "hide-selected", label: "Hide selected", cmd: Cmd::HideMenu, built: true },
 ];
 const COMBINE: &[Tool] = &[
     Tool { icon: "group", label: "Group", cmd: Cmd::Group, built: true },
@@ -83,12 +96,12 @@ const COMBINE: &[Tool] = &[
     Tool { icon: "show-common-part", label: "Common part", cmd: Cmd::NotBuilt, built: false },
 ];
 const ARRANGE: &[Tool] = &[
-    Tool { icon: "align", label: "Align", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "align", label: "Align", cmd: Cmd::Align, built: true },
     Tool { icon: "snap-to-grid", label: "Snap to grid", cmd: Cmd::SnapToggle, built: true },
-    Tool { icon: "drop-to-workplane", label: "Drop", cmd: Cmd::NotBuilt, built: false },
-    Tool { icon: "lay-flat-on-face", label: "Lay flat", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "drop-to-workplane", label: "Drop", cmd: Cmd::Drop, built: true },
+    Tool { icon: "lay-flat-on-face", label: "Lay flat", cmd: Cmd::LayFlat, built: true },
     Tool { icon: "align-faces", label: "Align faces", cmd: Cmd::NotBuilt, built: false },
-    Tool { icon: "center-on-workplane", label: "Center", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "center-on-workplane", label: "Center", cmd: Cmd::Center, built: true },
 ];
 const MODIFY: &[Tool] = &[
     Tool { icon: "mirror", label: "Mirror", cmd: Cmd::NotBuilt, built: false },
@@ -119,7 +132,7 @@ const MANAGE: &[Tool] = &[
     Tool { icon: "collision", label: "Collision", cmd: Cmd::NotBuilt, built: false },
     Tool { icon: "add-plate", label: "Add plate", cmd: Cmd::AddPlate, built: true },
     Tool { icon: "full-screen", label: "Full screen", cmd: Cmd::NotBuilt, built: false },
-    Tool { icon: "gravity", label: "Gravity", cmd: Cmd::NotBuilt, built: false },
+    Tool { icon: "gravity", label: "Gravity", cmd: Cmd::Gravity, built: true },
     Tool { icon: "workspace-settings", label: "Settings", cmd: Cmd::Settings, built: true },
 ];
 const HELP: &[Tool] = &[

@@ -7,7 +7,8 @@ use printcaddy_core::{
     approximate_layer, bambu_material, bambu_materials, document_from_obj, document_from_step,
     document_to_obj, document_to_step, document_to_stl, export_3mf, export_bambu_3mf,
     extract_loaded_filaments, import_3mf, import_bambu_3mf, import_dxf, import_stl, import_svg,
-    ray_plane_y, slice_plate, snap_mm, standard_settings, BooleanOp, Document, FilamentRef,
+    ray_plane_y, slice_plate, snap_mm, standard_settings, AlignAxis, AlignTarget, BooleanOp,
+    Document, FilamentRef, Object,
     History, InfillPattern, LoadedFilament, ObjectId, PathKind, PresetId, Ray, Shape, SketchDef,
     SketchOp, SliceResult, SliceSettings, DEFAULT_BAMBU_MATERIAL, DEFAULT_MODEL_COLOR,
     DEFAULT_SNAP_MM, PLATE_SIZE_MM,
@@ -149,6 +150,13 @@ pub struct PrintCaddyApp {
     touches: HashMap<u64, Pos2>,
     /// The frame a touch ends, the browser also synthesises a mouse click. Skip that click.
     swallow_mouse: bool,
+    clipboard: Vec<Object>,
+    show_history: bool,
+    show_objects: bool,
+    show_align: bool,
+    show_hide_menu: bool,
+    gravity: bool,
+    lay_flat: bool,
 }
 
 impl PrintCaddyApp {
@@ -231,6 +239,13 @@ impl PrintCaddyApp {
             gesture: Gesture::None,
             touches: HashMap::new(),
             swallow_mouse: false,
+            clipboard: Vec::new(),
+            show_history: false,
+            show_objects: false,
+            show_align: false,
+            show_hide_menu: false,
+            gravity: false,
+            lay_flat: false,
         }
     }
 
@@ -1197,9 +1212,13 @@ impl PrintCaddyApp {
             self.end_primary();
         } else if response.clicked() {
             if let Some(pos) = pointer.interact_pos() {
-                let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
-                self.begin_primary(rect, pos, add);
-                self.end_primary();
+                if self.lay_flat {
+                    self.finish_lay_flat(rect, pos);
+                } else {
+                    let add = ctx.input(|input| input.modifiers.shift) || self.add_select;
+                    self.begin_primary(rect, pos, add);
+                    self.end_primary();
+                }
             }
         }
         let scroll = ctx.input(|input| input.smooth_scroll_delta.y);
@@ -1425,6 +1444,14 @@ impl eframe::App for PrintCaddyApp {
             self.history.redo(&mut self.doc);
             self.doc.bake_rotations();
             self.notice = "Redid the change".into();
+        } else if !ctx.wants_keyboard_input()
+            && ctx.input(|input| command && input.key_pressed(egui::Key::C))
+        {
+            self.copy_selection();
+        } else if !ctx.wants_keyboard_input()
+            && ctx.input(|input| command && input.key_pressed(egui::Key::V))
+        {
+            self.paste_clipboard();
         } else if delete_key {
             if self.doc.selection().is_some() {
                 self.history.end();
@@ -1622,11 +1649,18 @@ impl eframe::App for PrintCaddyApp {
             }
         }
         if ctx.input(|input| input.pointer.any_released()) {
+            if self.gravity && self.history.is_open() {
+                self.doc.drop_selection();
+            }
             self.doc.bake_rotations();
             self.history.end();
         }
         self.settings_window(ctx);
         self.shapes_window(ctx);
+        self.history_window(ctx);
+        self.object_list_window(ctx);
+        self.align_window(ctx);
+        self.hide_menu(ctx);
         self.shortcuts_window(ctx);
         self.plate_tiles(ctx, view_rect);
         self.projects_window(ctx);
@@ -1645,12 +1679,275 @@ impl eframe::App for PrintCaddyApp {
 }
 
 impl PrintCaddyApp {
+    fn step(&mut self, label: &str) {
+        self.history.end();
+        self.history.begin(&self.doc);
+        self.history.note(label);
+    }
+
+    fn copy_selection(&mut self) {
+        let mut ids: Vec<ObjectId> = self
+            .doc
+            .selected_ids()
+            .iter()
+            .copied()
+            .filter(|id| self.doc.object(*id).is_some_and(|object| object.parent.is_none()))
+            .collect();
+        loop {
+            let extra: Vec<ObjectId> = self
+                .doc
+                .objects()
+                .iter()
+                .filter(|object| {
+                    object
+                        .parent
+                        .is_some_and(|parent| ids.contains(&parent) && !ids.contains(&object.id))
+                })
+                .map(|object| object.id)
+                .collect();
+            if extra.is_empty() {
+                break;
+            }
+            ids.extend(extra);
+        }
+        self.clipboard = ids
+            .iter()
+            .filter_map(|id| self.doc.object(*id).cloned())
+            .collect();
+        self.notice = if self.clipboard.is_empty() {
+            "Nothing to copy.".into()
+        } else {
+            "Copied the selection.".into()
+        };
+    }
+
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_empty() {
+            self.notice = "The clipboard is empty.".into();
+            return;
+        }
+        self.step("Paste");
+        let copies = self.clipboard.clone();
+        let ids = self.doc.paste_copies(&copies);
+        self.history.end();
+        self.notice = format!("Pasted {}.", ids.len());
+    }
+
+    fn set_selected_hidden(&mut self, hidden: bool) {
+        let ids = self.doc.selected_ids().to_vec();
+        if ids.is_empty() {
+            return;
+        }
+        self.step(if hidden { "Hide" } else { "Show" });
+        self.doc.hide_ids(&ids, hidden);
+        self.history.end();
+        self.notice = if hidden {
+            "Hid the selection.".into()
+        } else {
+            "Showed the selection.".into()
+        };
+    }
+
+    fn finish_lay_flat(&mut self, rect: Rect, pos: Pos2) {
+        let Some(id) = self.doc.selection() else {
+            self.lay_flat = false;
+            self.notice = "Select a body, then click a face.".into();
+            return;
+        };
+        let aspect = Self::aspect_of(rect);
+        let ray = scene::screen_ray(rect, pos, self.camera.view_proj(aspect));
+        let Some(normal) = self.doc.face_normal(id, ray) else {
+            self.notice = "Click a face of the selected body.".into();
+            return;
+        };
+        self.lay_flat = false;
+        self.step("Lay flat");
+        self.doc.lay_flat(id, normal);
+        self.history.end();
+        self.notice = "Laid the face on the plate.".into();
+    }
+
+    fn history_window(&mut self, ctx: &egui::Context) {
+        if !self.show_history {
+            return;
+        }
+        let mut open = true;
+        let mut jump = None;
+        let (past, future) = self.history.labels();
+        egui::Window::new("History")
+            .open(&mut open)
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(70.0, 120.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(220.0);
+                if past.is_empty() && future.is_empty() {
+                    ui.label("No steps yet.");
+                }
+                for (index, label) in past.iter().enumerate() {
+                    if ui.button(label).clicked() {
+                        jump = Some(index + 1);
+                    }
+                }
+                ui.label(egui::RichText::new("Now").strong());
+                for label in &future {
+                    ui.label(egui::RichText::new(label).color(chrome::MUTED));
+                }
+            });
+        self.show_history = open;
+        if let Some(index) = jump {
+            self.history.jump(&mut self.doc, index);
+            self.notice = "Jumped to that step.".into();
+        }
+    }
+
+    fn object_list_window(&mut self, ctx: &egui::Context) {
+        if !self.show_objects {
+            return;
+        }
+        let mut open = true;
+        let rows: Vec<(ObjectId, String, bool, bool, bool)> = self
+            .doc
+            .objects()
+            .iter()
+            .filter(|object| object.parent.is_none())
+            .map(|object| {
+                (
+                    object.id,
+                    object.name.clone(),
+                    self.doc.is_selected(object.id),
+                    object.locked,
+                    object.hidden,
+                )
+            })
+            .collect();
+        let mut select = None;
+        let mut rename = None;
+        let mut lock = None;
+        let mut hide = None;
+        egui::Window::new("Objects")
+            .open(&mut open)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-330.0, 120.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(260.0);
+                if rows.is_empty() {
+                    ui.label("No bodies yet.");
+                }
+                for (id, name, selected, locked, hidden) in rows {
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(selected, "").clicked() {
+                            select = Some(id);
+                        }
+                        let mut edited = name.clone();
+                        if ui.text_edit_singleline(&mut edited).changed() {
+                            rename = Some((id, edited));
+                        }
+                        if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+                            lock = Some((id, !locked));
+                        }
+                        if ui.button(if hidden { "Show" } else { "Hide" }).clicked() {
+                            hide = Some((id, !hidden));
+                        }
+                    });
+                }
+            });
+        self.show_objects = open;
+        if let Some(id) = select {
+            self.doc.select(Some(id));
+        }
+        if let Some((id, name)) = rename {
+            self.doc.set_name(id, name);
+        }
+        if let Some((id, locked)) = lock {
+            self.step(if locked { "Lock" } else { "Unlock" });
+            self.doc.set_locked(id, locked);
+            self.history.end();
+        }
+        if let Some((id, hidden)) = hide {
+            self.step(if hidden { "Hide" } else { "Show" });
+            self.doc.hide_ids(&[id], hidden);
+            self.history.end();
+        }
+    }
+
+    fn align_window(&mut self, ctx: &egui::Context) {
+        if !self.show_align {
+            return;
+        }
+        let mut open = true;
+        let mut choice = None;
+        let rows = [
+            (AlignAxis::X, "X", ["Left", "Centre", "Right"]),
+            (AlignAxis::Z, "Z", ["Front", "Middle", "Back"]),
+            (AlignAxis::Y, "Y", ["Bottom", "Middle", "Top"]),
+        ];
+        let targets = [AlignTarget::Min, AlignTarget::Center, AlignTarget::Max];
+        egui::Window::new("Align")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
+            .show(ctx, |ui| {
+                ui.label("Line the other bodies up with the last one you selected.");
+                for (axis, title, words) in rows {
+                    ui.horizontal(|ui| {
+                        ui.label(title);
+                        for (target, word) in targets.into_iter().zip(words) {
+                            if ui.button(word).clicked() {
+                                choice = Some((axis, target, word));
+                            }
+                        }
+                    });
+                }
+            });
+        self.show_align = open;
+        if let Some((axis, target, word)) = choice {
+            self.step("Align");
+            let moved = self.doc.align_selection(axis, target);
+            self.history.end();
+            self.notice = format!("Aligned {moved} to {word}.");
+        }
+    }
+
+    fn hide_menu(&mut self, ctx: &egui::Context) {
+        if !self.show_hide_menu {
+            return;
+        }
+        let mut open = true;
+        let mut action = None;
+        egui::Window::new("Hide")
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(-80.0, 70.0))
+            .show(ctx, |ui| {
+                if ui.button("Hide selected").clicked() {
+                    action = Some(chrome::Cmd::HideSelected);
+                }
+                if ui.button("Show selected").clicked() {
+                    action = Some(chrome::Cmd::ShowSelected);
+                }
+                if ui.button("Show all").clicked() {
+                    action = Some(chrome::Cmd::ShowAll);
+                }
+            });
+        self.show_hide_menu = open;
+        if let Some(cmd) = action {
+            self.show_hide_menu = false;
+            self.apply_chrome(cmd);
+        }
+    }
+
     fn tool_ready(&self, cmd: chrome::Cmd) -> bool {
         let selected = self.doc.selected_ids().len();
         match cmd {
             chrome::Cmd::Undo => self.history.can_undo(),
             chrome::Cmd::Redo => self.history.can_redo(),
-            chrome::Cmd::Duplicate | chrome::Cmd::Delete | chrome::Cmd::Fillet => selected >= 1,
+            chrome::Cmd::Duplicate
+            | chrome::Cmd::Delete
+            | chrome::Cmd::Fillet
+            | chrome::Cmd::Copy
+            | chrome::Cmd::HideSelected
+            | chrome::Cmd::ShowSelected
+            | chrome::Cmd::Align
+            | chrome::Cmd::Center
+            | chrome::Cmd::Drop
+            | chrome::Cmd::LayFlat => selected >= 1,
+            chrome::Cmd::Paste => !self.clipboard.is_empty(),
             chrome::Cmd::Group | chrome::Cmd::Intersect | chrome::Cmd::CutOut => selected >= 2,
             chrome::Cmd::Ungroup => selected >= 1,
             chrome::Cmd::NotBuilt => false,
@@ -1736,6 +2033,49 @@ impl PrintCaddyApp {
             chrome::Cmd::ZoomOut => self.camera.zoom_factor(1.25),
             chrome::Cmd::ToggleRulers => self.show_rulers = !self.show_rulers,
             chrome::Cmd::ToggleGrid => self.show_grid = !self.show_grid,
+            chrome::Cmd::Copy => self.copy_selection(),
+            chrome::Cmd::Paste => self.paste_clipboard(),
+            chrome::Cmd::History => self.show_history = true,
+            chrome::Cmd::ObjectList => self.show_objects = true,
+            chrome::Cmd::HideMenu => self.show_hide_menu = true,
+            chrome::Cmd::HideSelected => self.set_selected_hidden(true),
+            chrome::Cmd::ShowSelected => self.set_selected_hidden(false),
+            chrome::Cmd::ShowAll => {
+                self.step("Show all");
+                self.doc.show_all();
+                self.history.end();
+                self.notice = "Showed every body.".into();
+            }
+            chrome::Cmd::Align => self.show_align = true,
+            chrome::Cmd::Center => {
+                self.step("Centre");
+                if self.doc.center_selection() {
+                    self.notice = "Centred on the plate.".into();
+                }
+                self.history.end();
+            }
+            chrome::Cmd::Drop => {
+                self.step("Drop");
+                if self.doc.drop_selection() {
+                    self.notice = "Dropped onto the plate.".into();
+                }
+                self.history.end();
+            }
+            chrome::Cmd::LayFlat => {
+                self.lay_flat = true;
+                self.notice = "Click a face to lay it on the plate.".into();
+            }
+            chrome::Cmd::Gravity => {
+                self.gravity = !self.gravity;
+                if self.gravity {
+                    self.step("Gravity");
+                    self.doc.drop_selection();
+                    self.history.end();
+                    self.notice = "Gravity is on.".into();
+                } else {
+                    self.notice = "Gravity is off.".into();
+                }
+            }
             chrome::Cmd::Guide | chrome::Cmd::Bug | chrome::Cmd::NotBuilt => {
                 self.notice = "That tool is not in this build yet.".into();
             }

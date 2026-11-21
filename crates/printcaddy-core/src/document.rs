@@ -343,6 +343,13 @@ impl Document {
         self.selection.contains(&id)
     }
 
+    pub(crate) fn replace_selection(&mut self, ids: Vec<ObjectId>) {
+        self.selection = ids
+            .into_iter()
+            .filter(|id| self.objects.iter().any(|object| object.id == *id))
+            .collect();
+    }
+
     pub fn select(&mut self, id: Option<ObjectId>) {
         self.selection.clear();
         if let Some(id) = id.filter(|id| self.objects.iter().any(|object| object.id == *id)) {
@@ -733,7 +740,7 @@ impl Document {
     pub fn hit_test(&self, ray: Ray) -> Option<ObjectId> {
         let mut best: Option<(f32, ObjectId)> = None;
         for object in &self.objects {
-            if object.locked || object.parent.is_some() {
+            if object.locked || object.hidden || object.parent.is_some() {
                 continue;
             }
             let hit = if let ObjectKind::Group { cut: None, .. } = &object.kind {
@@ -1200,7 +1207,7 @@ impl Document {
         Some(new_id)
     }
 
-    fn allocate(&mut self, name: String, kind: ObjectKind, position: Vec3) -> ObjectId {
+    pub(crate) fn allocate(&mut self, name: String, kind: ObjectKind, position: Vec3) -> ObjectId {
         let id = ObjectId(self.next_id);
         self.next_id += 1;
         self.objects.push(Object {

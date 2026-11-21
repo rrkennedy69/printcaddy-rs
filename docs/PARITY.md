@@ -1,5 +1,13 @@
 # Parity
 
+Round G turns on the live editing tools that were grey.
+
+Copy and paste (Ctrl+C / Ctrl+V) keep a clipboard in the page. Paste moves each body 12 mm in X and Z, and not past 10 mm outside the plate, as one undo step. History lists the steps and a click jumps back to one. The object list selects, renames, locks, and hides. Hide selected opens Hide, Show selected, and Show all. Align lines the other selected bodies up with the last one: left/centre/right, front/middle/back, bottom/middle/top. Centre moves the selection onto the middle of the plate. Drop sets it on the plate or on the solid underneath. Lay flat waits for a click on a face, turns that face down, and drops. Gravity, while on, drops a body at the end of a move. Each of these is one undo step.
+
+Still different: the history list names the step, it does not replay the live sentence for every older tool. Lay flat uses the clicked triangle of this port's mesh. Align does not yet resize bodies or follow a tilted workplane. Paste does not also write the system clipboard.
+
+Shots: `docs/shots/parity/rust-g-objectlist.png`, `rust-g-history.png`, `rust-g-align.png`.
+
 Round F finishes the object inspector and lines the plate up with the live editor.
 
 The Solid and Hole tiles are the live 64 px swatches. Hole is the diagonal hatch. The active tile has the orange rim. Sliders are an orange fill on a light track with a white thumb. Number boxes show the unit inside (`mm`, `in`, or `°`). Section cards collapse. The panel scrolls inside the window at desktop and iPad sizes. Header icons are the larger help, lock, and eye marks. The bed is the live 200 mm default, so Home is the live camera `(118, 96, 118)` at 38°. The axis triad sits on the front-left corner (X right, Y toward the back, Z up). Green ruler labels use the same type size as the red ones. Modify, Arrange, and shape-library items that are not built are grey and do not run.

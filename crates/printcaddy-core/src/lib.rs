@@ -1,5 +1,6 @@
 //! PrintCaddy document model. This crate has no graphics or browser dependencies.
 
+mod arrange;
 mod bambu;
 mod boolean;
 mod color;
@@ -16,6 +17,7 @@ mod solids;
 mod stl;
 mod updates;
 
+pub use arrange::{AlignAxis, AlignTarget};
 pub use bambu::{
     bambu_material, bambu_materials, export_bambu_3mf, extract_loaded_filaments, import_bambu_3mf,
     BambuMaterial, FilamentRef, LoadedFilament, DEFAULT_BAMBU_MATERIAL,
