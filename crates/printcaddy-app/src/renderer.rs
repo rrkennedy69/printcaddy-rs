@@ -36,8 +36,13 @@ out vec4 frag;
 void main() {
     if (v_y > u_clip_y) discard;
     vec3 n = normalize(v_n);
-    float key = clamp(dot(n, normalize(vec3(0.35, 0.92, 0.22))), 0.0, 1.0);
-    float fill = clamp(dot(n, normalize(vec3(-0.45, 0.15, -0.55))), 0.0, 1.0);
+    // Bodies in this port are wound either way. Light whichever side faces the lamp
+    // so a solid still reads as a solid after the near face is kept.
+    vec3 key_dir = normalize(vec3(0.35, 0.92, 0.22));
+    vec3 fill_dir = normalize(vec3(-0.45, 0.15, -0.55));
+    if (dot(n, key_dir) < 0.0) n = -n;
+    float key = clamp(dot(n, key_dir), 0.0, 1.0);
+    float fill = clamp(dot(n, fill_dir), 0.0, 1.0);
     vec3 lit = u_color * (0.34 + 0.58 * key + 0.16 * fill);
     vec3 color = mix(lit, u_color, u_unlit);
     color = mix(color, vec3(0.55, 0.86, 1.0), u_selected * 0.42);
@@ -114,6 +119,19 @@ impl ViewportPainter {
     }
 }
 
+fn clip_depth(view_proj: &[f32; 16], model: &[f32; 16]) -> f32 {
+    let x = model[12];
+    let y = model[13];
+    let z = model[14];
+    let clip_z = view_proj[2] * x + view_proj[6] * y + view_proj[10] * z + view_proj[14];
+    let clip_w = view_proj[3] * x + view_proj[7] * y + view_proj[11] * z + view_proj[15];
+    if clip_w.abs() < 1e-5 {
+        0.0
+    } else {
+        clip_z / clip_w
+    }
+}
+
 fn paint(
     gl: &glow::Context,
     state: &Mutex<Option<GpuState>>,
@@ -162,8 +180,14 @@ fn paint(
         gl.enable(glow::SCISSOR_TEST);
         gl.viewport(vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px);
         gl.scissor(vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px);
+        // egui paints with the depth test off and premultiplied blending on.
+        // A solid has to write depth and replace the pixel, or the far side
+        // (and the page) shows through the near side.
         gl.enable(glow::DEPTH_TEST);
         gl.depth_func(glow::LEQUAL);
+        gl.depth_mask(true);
+        gl.disable(glow::BLEND);
+        gl.disable(glow::CULL_FACE);
         gl.clear_depth_f32(1.0);
         gl.clear_color(
             frame.clear[0],
@@ -172,9 +196,6 @@ fn paint(
             frame.clear[3],
         );
         gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-        gl.enable(glow::CULL_FACE);
-        gl.cull_face(glow::BACK);
-        gl.front_face(glow::CCW);
 
         gl.use_program(Some(gpu.mesh_program));
         let vp_loc = gl.get_uniform_location(gpu.mesh_program, "u_vp");
@@ -186,7 +207,6 @@ fn paint(
         let unlit_loc = gl.get_uniform_location(gpu.mesh_program, "u_unlit");
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
         gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
-        gl.disable(glow::CULL_FACE);
         gl.uniform_1_f32(unlit_loc.as_ref(), 1.0);
         for object in frame.objects.iter().filter(|object| object.id >= PLATE_MESH_ID) {
             let Some(mesh) = gpu.meshes.get(&object.id) else {
@@ -212,26 +232,35 @@ fn paint(
         gl.draw_arrays(glow::LINES, 0, gpu.grid_count);
 
         gl.use_program(Some(gpu.mesh_program));
-        gl.enable(glow::CULL_FACE);
+        gl.disable(glow::CULL_FACE);
         gl.uniform_matrix_4_f32_slice(vp_loc.as_ref(), false, &frame.view_proj);
         gl.uniform_1_f32(clip_loc.as_ref(), frame.clip_y);
         gl.uniform_1_f32(unlit_loc.as_ref(), 0.0);
+        let mut glass: Vec<usize> = frame
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, object)| object.id < PLATE_MESH_ID && object.alpha < 0.99)
+            .map(|(index, _)| index)
+            .collect();
+        glass.sort_by(|&a, &b| {
+            clip_depth(&frame.view_proj, &frame.objects[b].model)
+                .partial_cmp(&clip_depth(&frame.view_proj, &frame.objects[a].model))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for transparent in [false, true] {
             if transparent {
                 gl.enable(glow::BLEND);
+                // Straight alpha. egui's premultiplied blend would show the page through a hole.
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 gl.depth_mask(false);
+            } else {
+                gl.disable(glow::BLEND);
+                gl.depth_mask(true);
             }
-            for object in &frame.objects {
-                if object.id >= PLATE_MESH_ID {
-                    continue;
-                }
-                let is_glass = object.alpha < 0.99;
-                if is_glass != transparent {
-                    continue;
-                }
+            let draw = |object: &crate::scene::DrawObject| {
                 let Some(mesh) = gpu.meshes.get(&object.id) else {
-                    continue;
+                    return;
                 };
                 gl.uniform_matrix_4_f32_slice(model_loc.as_ref(), false, &object.model);
                 gl.uniform_3_f32(
@@ -241,9 +270,22 @@ fn paint(
                     object.color[2],
                 );
                 gl.uniform_1_f32(sel_loc.as_ref(), if object.selected { 1.0 } else { 0.0 });
-                gl.uniform_1_f32(alpha_loc.as_ref(), object.alpha);
+                let alpha = if transparent { object.alpha } else { 1.0 };
+                gl.uniform_1_f32(alpha_loc.as_ref(), alpha);
                 gl.bind_vertex_array(Some(mesh.vao));
                 gl.draw_elements(glow::TRIANGLES, mesh.count, glow::UNSIGNED_INT, 0);
+            };
+            if transparent {
+                for index in &glass {
+                    draw(&frame.objects[*index]);
+                }
+            } else {
+                for object in &frame.objects {
+                    if object.id >= PLATE_MESH_ID || object.alpha < 0.99 {
+                        continue;
+                    }
+                    draw(object);
+                }
             }
             if transparent {
                 gl.depth_mask(true);
@@ -255,6 +297,15 @@ fn paint(
         gl.use_program(None);
         gl.disable(glow::CULL_FACE);
         gl.disable(glow::DEPTH_TEST);
+        gl.depth_mask(true);
+        // Hand the blend state back to egui, which draws the chrome after this callback.
+        gl.enable(glow::BLEND);
+        gl.blend_func_separate(
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE_MINUS_DST_ALPHA,
+            glow::ONE,
+        );
         gl.disable(glow::SCISSOR_TEST);
     }
     Ok(())

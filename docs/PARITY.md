@@ -1,5 +1,11 @@
 # Parity
 
+Round I makes solid bodies opaque again.
+
+A new body is wound so its near face was treated as a back face and thrown away, and the painter left egui's premultiplied blend on. You saw the far wall, and the shape behind it, through the gap. Solids now keep the near surface, write depth, and replace the pixel. A hole, a body marked transparent, and the X-ray theme stay see-through and are drawn after the solids, far ones first.
+
+Shots: `docs/shots/parity/rust-i-solid.png`, `rust-i-hole.png`.
+
 Round H, third pass, finishes the Modify tools that could be made solid.
 
 Hole pattern cuts the holes out of the body. On a box the result is one closed solid, with no cutter left behind. Chamfer bevels every sharp edge: a box gets all twelve, and a cylinder gets both rims. Split caps the cut, so both pieces are closed. The plane is an axis and a position from 5 to 95, or the face you click. Cookie cutter builds a wall, a cutting edge, and a rim around the outline, mirrored by default, with the live starting sizes (wall 1.2 mm, height 15 mm, rim 4 mm by 2 mm, edge 0.4 mm). Simplify welds corners and then runs the meshoptimizer simplify pass.
